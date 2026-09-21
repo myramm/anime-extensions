@@ -44,19 +44,16 @@ https://raw.githubusercontent.com/myramm/aniyomi-extensions/repo/repo.json
 
 ---
 
-## 🇮🇩 Daftar Ekstensi Anime Indonesia
+## 🇮🇩 Daftar Ekstensi Anime Indonesia (100% Anti-Cloudflare & Stabil)
 
-| Sumber / Ekstensi | Status | Modul |
-| :--- | :---: | :--- |
-| **OtakuDesu** | ✅ Aktif | `src/id/otakudesu` |
-| **Samehadaku** | ✅ Aktif | `src/id/samehadaku` |
-| **AnimeIndo** | ✅ Aktif | `src/id/animeindo` |
-| **Kuramanime** | ✅ Aktif | `src/id/kuramanime` |
-| **Kuronime** | ✅ Aktif | `src/id/kuronime` |
-| **Neonime** | ✅ Aktif | `src/id/neonime` |
-| **Nimegami** | ✅ Aktif | `src/id/nimegami` |
-| **Oploverz** | ✅ Aktif | `src/id/oploverz` |
-| **Minioppai** | ✅ Aktif | `src/id/minioppai` |
+| Sumber / Ekstensi | Status | Modul | Keterangan |
+| :--- | :---: | :--- | :--- |
+| **AnimeIndo** | ✅ Aktif | `src/id/animeindo` | Katalog anime lengkap, streaming lancar |
+| **Kuronime** | ✅ Aktif | `src/id/kuronime` | Streaming & download sub Indo cepat |
+| **NimeGami** | ✅ Aktif | `src/id/nimegami` | Batch & episode video kualitas tinggi |
+| **MiniOppai** | ✅ Aktif | `src/id/minioppai` | Koleksi streaming & search lancar |
+
+> ℹ️ **Catatan:** Sumber yang menggunakan proteksi bot Cloudflare Turnstile/WAF yang sering bermasalah di WebView Android (seperti Kuramanime & OtakuDesu) telah dinonaktifkan demi stabilitas dan kelancaran pemutaran video.
 
 ---
 

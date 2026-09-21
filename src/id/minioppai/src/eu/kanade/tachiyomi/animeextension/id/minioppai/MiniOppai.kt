@@ -24,7 +24,7 @@ class MiniOppai :
     ) {
     override fun headersBuilder() = super.headersBuilder().add("Referer", baseUrl)
 
-    override val animeListUrl = "$baseUrl/advanced-search"
+    override val animeListUrl = "$baseUrl/anime-list"
 
     override val dateFormatter by lazy {
         SimpleDateFormat("MMMM d, yyyy", Locale(lang))
@@ -81,7 +81,7 @@ class MiniOppai :
     }
 
     // =============================== Search ===============================
-    override fun searchAnimeSelector() = "div.latest article a.tip"
+    override fun searchAnimeSelector() = "div.latest article a.tip, div.listupd article a.tip, article.bs a.tip"
 
     override fun searchAnimeFromElement(element: Element): SAnime = SAnime.create().apply {
         setUrlWithoutDomain(element.attr("href"))
