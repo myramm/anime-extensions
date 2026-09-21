@@ -1,8 +1,11 @@
 package eu.kanade.tachiyomi.animeextension.id.kuramanime
 
+import android.content.SharedPreferences
 import androidx.preference.EditTextPreference
 import androidx.preference.ListPreference
 import androidx.preference.PreferenceScreen
+import androidx.preference.SwitchPreferenceCompat
+import aniyomi.lib.cloudflareinterceptor.CloudflareInterceptor
 import aniyomi.lib.doodextractor.DoodExtractor
 import aniyomi.lib.filemoonextractor.FilemoonExtractor
 import aniyomi.lib.streamtapeextractor.StreamTapeExtractor
@@ -25,8 +28,14 @@ import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 import okhttp3.FormBody
 import okhttp3.HttpUrl.Companion.toHttpUrl
+import okhttp3.Interceptor
+import okhttp3.MediaType.Companion.toMediaType
+import okhttp3.OkHttpClient
+import okhttp3.Protocol
 import okhttp3.Request
+import okhttp3.RequestBody.Companion.toRequestBody
 import okhttp3.Response
+import okhttp3.ResponseBody.Companion.toResponseBody
 import org.jsoup.Jsoup
 import org.jsoup.nodes.Document
 import org.jsoup.nodes.Element
@@ -45,6 +54,13 @@ class Kuramanime :
     override val supportsLatest = true
 
     private val preferences by getPreferencesLazy()
+
+    override val client: OkHttpClient by lazy {
+        network.client.newBuilder()
+            .addInterceptor(ScraperFallbackInterceptor(preferences))
+            .addNetworkInterceptor(CloudflareInterceptor(network.client))
+            .build()
+    }
 
     // ============================== Popular ===============================
     override fun popularAnimeRequest(page: Int) = GET("$baseUrl/anime?order_by=popular&page=$page")
@@ -446,11 +462,93 @@ class Kuramanime :
                 preferences.edit().putString(key, newUrl).commit()
             }
         }.also(screen::addPreference)
+
+        SwitchPreferenceCompat(screen.context).apply {
+            key = PREF_USE_SCRAPER_KEY
+            title = "Gunakan Fallback Scraper API"
+            summary = "Gunakan Scraper API eksternal jika request terhalang proteksi Cloudflare WAF"
+            setDefaultValue(true)
+
+            setOnPreferenceChangeListener { _, newValue ->
+                preferences.edit().putBoolean(key, newValue as Boolean).commit()
+            }
+        }.also(screen::addPreference)
+
+        EditTextPreference(screen.context).apply {
+            key = PREF_SCRAPER_URL_KEY
+            title = "Scraper API URL"
+            dialogTitle = "Scraper API URL"
+            summary = "Endpoint Scraper API (Default: $DEFAULT_SCRAPER_URL)"
+            setDefaultValue(DEFAULT_SCRAPER_URL)
+
+            setOnPreferenceChangeListener { _, newValue ->
+                val newUrl = (newValue as String).trim().trimEnd('/')
+                preferences.edit().putString(key, newUrl).commit()
+            }
+        }.also(screen::addPreference)
+    }
+
+    /**
+     * Interceptor to fallback to external Scraper API (e.g. https://rbot.duar.eu.cc)
+     * if direct request gets HTTP 403 / 503 challenge.
+     */
+    private class ScraperFallbackInterceptor(
+        private val preferences: SharedPreferences,
+    ) : Interceptor {
+        override fun intercept(chain: Interceptor.Chain): Response {
+            val request = chain.request()
+            val response = chain.proceed(request)
+
+            val useScraper = preferences.getBoolean(PREF_USE_SCRAPER_KEY, true)
+            val scraperApi = preferences.getString(PREF_SCRAPER_URL_KEY, DEFAULT_SCRAPER_URL)!!.trimEnd('/')
+
+            val host = request.url.host
+            if (!useScraper || host.contains("duar.eu.cc") || request.url.encodedPath.contains("cf-clearance-scraper")) {
+                return response
+            }
+
+            val isBlocked = response.code in listOf(403, 503) ||
+                response.header("cf-mitigated") != null
+
+            if (isBlocked && request.method == "GET") {
+                response.close()
+                return try {
+                    val jsonPayload = """{"url":"${request.url}","mode":"source"}"""
+                    val scraperRequest = Request.Builder()
+                        .url("$scraperApi/cf-clearance-scraper")
+                        .post(jsonPayload.toRequestBody("application/json".toMediaType()))
+                        .header("Content-Type", "application/json")
+                        .build()
+
+                    val scraperResponse = chain.proceed(scraperRequest)
+                    if (scraperResponse.isSuccessful) {
+                        val html = scraperResponse.body.string()
+                        Response.Builder()
+                            .request(request)
+                            .protocol(Protocol.HTTP_1_1)
+                            .code(200)
+                            .message("OK (via Scraper)")
+                            .body(html.toResponseBody("text/html; charset=utf-8".toMediaType()))
+                            .build()
+                    } else {
+                        scraperResponse
+                    }
+                } catch (e: Exception) {
+                    chain.proceed(request)
+                }
+            }
+
+            return response
+        }
     }
 
     companion object {
         private const val DEFAULT_BASE_URL = "https://v20.kuramanime.ing"
         private const val PREF_BASE_URL_KEY = "pref_override_base_url"
+
+        private const val DEFAULT_SCRAPER_URL = "https://rbot.duar.eu.cc"
+        private const val PREF_USE_SCRAPER_KEY = "pref_use_scraper_fallback"
+        private const val PREF_SCRAPER_URL_KEY = "pref_scraper_api_url"
 
         private const val PREF_QUALITY_KEY = "preferred_quality"
         private const val PREF_QUALITY_TITLE = "Preferred quality"
