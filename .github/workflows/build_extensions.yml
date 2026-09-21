@@ -44,14 +44,14 @@ jobs:
           chmod +x gradlew
           ./gradlew assembleDebug --no-daemon --stacktrace
 
-      - name: Create Extension Repo (index.min.json)
+      - name: Generate Extension Repo (index.min.json)
         id: create_repo
         run: |
-          mkdir -p repo/apk repo/icon dist
+          mkdir -p repo/apk repo/icon dist tmp
           SHORT_SHA=$(git rev-parse --short HEAD)
           echo "COMMIT_SHA=$SHORT_SHA" >> $GITHUB_ENV
 
-          # Copy APKs to repo/apk and dist/
+          # Copy APKs
           find src/id -type f -name "*.apk" | while read -r apk; do
             ext_name=$(echo "$apk" | awk -F'/' '{print $3}')
             target_name="aniyomi-id-${ext_name}.apk"
@@ -60,13 +60,12 @@ jobs:
             cp "$apk" "dist/aniyomi-id-${ext_name}-v${SHORT_SHA}.apk"
           done
 
-          # Download Inspector and generate index.min.json
-          echo "Downloading Inspector..."
-          INSPECTOR_LINK=$(curl -s "https://api.github.com/repos/komikku-app/aniyomi-extensions-inspector/releases/latest" | jq -r '.assets[0].browser_download_url')
-          curl -L "$INSPECTOR_LINK" -o ./Inspector.jar
+          # Download Inspector and generate metadata
+          echo "Downloading Inspector.jar..."
+          curl -L -s "https://github.com/komikku-app/aniyomi-extensions-inspector/releases/download/v1.4.1/Inspector.jar" -o ./Inspector.jar
           java -jar ./Inspector.jar "repo/apk" "output.json" "tmp"
 
-          echo "Generating repo metadata..."
+          echo "Running create-repo.py..."
           python ./.github/scripts/create-repo.py
 
           # Checksum
@@ -79,13 +78,18 @@ jobs:
           echo "$CHECKSUMS" >> $GITHUB_ENV
           echo "EOF" >> $GITHUB_ENV
 
-      - name: Deploy Repo to GitHub (branch: repo)
-        uses: peaceiris/actions-gh-pages@v4
-        with:
-          github_token: ${{ secrets.GITHUB_TOKEN }}
-          publish_branch: repo
-          publish_dir: ./repo
-          keep_files: false
+      - name: Deploy to repo branch
+        run: |
+          cd repo
+          git config --global user.name "github-actions[bot]"
+          git config --global user.email "github-actions[bot]@users.noreply.github.com"
+          git init
+          git checkout -B repo
+          git add -A
+          git commit -m "Deploy extension repo [skip ci]"
+          git remote add origin https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/${{ github.repository }}.git
+          git push -f origin repo
+          cd ..
 
       - name: Upload APK Artifacts
         uses: actions/upload-artifact@v4
