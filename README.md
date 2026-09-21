@@ -1,82 +1,68 @@
 <div align="center">
 
-| Install on Aniyomi | Install on Anikku | Build | Discord |
-|:------------------:|:-----------------:|:-----:|:-------:|
-| [![Install](https://img.shields.io/badge/Click%20here%20to%20install%20repo-gray?style=flat&labelColor=red)](https://intradeus.github.io/http-protocol-redirector/?r=aniyomi://add-repo?url=https://raw.githubusercontent.com/yuzono/anime-repo/repo/index.min.json) | [![Install](https://img.shields.io/badge/Click%20here%20to%20install%20repo-gray?style=flat&labelColor=red)](https://intradeus.github.io/http-protocol-redirector/?r=anikku://add-repo?url=https://raw.githubusercontent.com/yuzono/anime-repo/repo/index.min.json) | ![CI](https://github.com/yuzono/anime-extensions/actions/workflows/build_push.yml/badge.svg) | [![Discord](https://img.shields.io/discord/1377136877491982366.svg?label=&labelColor=6A7EC2&color=7389D8&logo=discord&logoColor=FFFFFF)](https://discord.gg/85MZhUX688) |
+# 🎬 Aniyomi Indonesian Anime Extensions
 
-[![Sponsor me on GitHub](https://custom-icon-badges.demolab.com/badge/-Sponsor-ea4aaa?style=for-the-badge&logo=heart&logoColor=white)](https://github.com/sponsors/cuong-tran "Sponsor me on GitHub")
+Koleksi ekstensi anime khusus **Bahasa Indonesia (ID)** untuk aplikasi [**Aniyomi**](https://github.com/myramm/aniyomi).
 
-![Visitor Count](https://count.getloli.com/get/@yuzono?theme=capoo-2)
+[![Build Indonesian Extensions](https://github.com/myramm/aniyomi-extensions/actions/workflows/build_extensions.yml/badge.svg)](https://github.com/myramm/aniyomi-extensions/actions/workflows/build_extensions.yml)
+[![Releases](https://img.shields.io/github/v/release/myramm/aniyomi-extensions?color=blue&label=Download%20APK)](https://github.com/myramm/aniyomi-extensions/releases)
+[![License](https://img.shields.io/badge/License-Apache%202.0-green.svg)](https://opensource.org/licenses/Apache-2.0)
+
 </div>
 
-# ![app icon](./.github/readme-images/app-icon.png)Anikku/Aniyomi Extensions
-Anikku/Aniyomi is a free and open source anime player for Android 6.0 and above.
+---
 
-This repository contains the available extension catalogues for the [Anikku](https://github.com/komikku-app/anikku) or [Aniyomi](https://github.com/aniyomiorg/aniyomi) forks.
+## 🇮🇩 Daftar Ekstensi Anime Indonesia
 
-## Recommend App
+Berikut adalah daftar sumber anime Indonesia yang didukung dalam repository ini:
 
-### [Anikku](https://github.com/komikku-app/anikku)
+| Sumber / Ekstensi | Status | Modul |
+| :--- | :---: | :--- |
+| **OtakuDesu** | ✅ Aktif | `src/id/otakudesu` |
+| **Samehadaku** | ✅ Aktif | `src/id/samehadaku` |
+| **AnimeIndo** | ✅ Aktif | `src/id/animeindo` |
+| **Kuramanime** | ✅ Aktif | `src/id/kuramanime` |
+| **Kuronime** | ✅ Aktif | `src/id/kuronime` |
+| **Neonime** | ✅ Aktif | `src/id/neonime` |
+| **Nimegami** | ✅ Aktif | `src/id/nimegami` |
+| **Oploverz** | ✅ Aktif | `src/id/oploverz` |
+| **Minioppai** | ✅ Aktif | `src/id/minioppai` |
 
-### [Aniyomi](https://github.com/aniyomiorg/aniyomi)
+---
 
-## How to add the repo
+## 📥 Cara Download & Install Ekstensi
 
-**If you are new to repository/extensions, please read the [Yūzōnō Getting Started guide](https://yuzono.github.io/docs/guides/getting-started#adding-the-extension-repo) first.**
+1. Buka halaman [**GitHub Releases**](https://github.com/myramm/aniyomi-extensions/releases/latest).
+2. Pilih dan download file `.apk` ekstensi anime yang ingin Anda gunakan (misal `aniyomi-id-samehadaku-*.apk`).
+3. Install file APK tersebut di HP Android Anda.
+4. Buka aplikasi **Aniyomi** ➔ Masuk ke menu **Browse (Jelajahi)** ➔ Ekstensi akan langsung muncul dan siap digunakan untuk streaming anime.
 
-* You can add our repo by visiting the [Yūzōnō Website](https://yuzono.github.io/add-repo-ani)
-* Otherwise, copy & paste the following URL:
+---
 
-```html
-https://raw.githubusercontent.com/yuzono/anime-repo/repo/index.min.json
+## 🛠️ Panduan Pengembangan (Development)
+
+Jika Anda ingin mengedit atau menambahkan ekstensi baru secara lokal:
+
+### 1. Compile & Cek Error
+```bash
+# Ganti dengan nama modul ekstensi yang ingin dicek
+./gradlew :src:id:samehadaku:compileDebugKotlin
 ```
 
-### Manual downloads
+### 2. Build APK Ekstensi Tertentu
+```bash
+./gradlew :src:id:samehadaku:assembleDebug
+```
+*File APK hasil kompilasi akan berada di folder `src/id/<nama>/build/outputs/apk/debug/`.*
 
-If you prefer to directly download the APK files, they are available via [website](https://yuzono.github.io/extensions-aniyomi/) or directly in this GitHub repository in the [`repo` branch](https://github.com/yuzono/anime-repo/tree/repo/apk).
+### 3. Build Semua Ekstensi Sekaligus
+```bash
+./gradlew assembleDebug
+```
 
-## Requests
+---
 
-To request a new source or bug fix, [create an issue](https://github.com/yuzono/aniyomi-extensions/issues/new/choose).
+## ⚖️ Disclaimer
 
-Please note that creating an issue does not mean that the source will be added or fixed in a timely
-fashion, because the work is volunteer-based. Some sources may also be impossible to do or prohibitively
-difficult to maintain.
-
-If you would like to see a request fulfilled and have the necessary skills to do so, consider contributing!
-Issues are up-for-grabs for any developer if there is no assigned user already.
-
-## Contributing
-
-Contributions are welcome!
-
-Check out the repo's [issue backlog](https://github.com/yuzono/anime-extensions/issues) for source requests and bug reports.
-
-To get started with development, see [CONTRIBUTING.md](./CONTRIBUTING.md).
-
-It might also be good to read our [CODE_OF_CONDUCT.md](./CODE_OF_CONDUCT.md).
-
-## License
-
-    Copyright 2015 Javier Tomás
-
-    Licensed under the Apache License, Version 2.0 (the "License");
-    you may not use this file except in compliance with the License.
-    You may obtain a copy of the License at
-
-    http://www.apache.org/licenses/LICENSE-2.0
-
-    Unless required by applicable law or agreed to in writing, software
-    distributed under the License is distributed on an "AS IS" BASIS,
-    WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-    See the License for the specific language governing permissions and
-    limitations under the License.
-
-## Disclaimer
-
-This project does not have any affiliation with the content providers available.
-
-This project is not affiliated with Anikku/Aniyomi. Don't ask for help about these extensions at the
-official support means of Anikku/Aniyomi. All credits to the codebase goes to the original contributors.
-
-The developer of this application does not have any affiliation with the content providers available.
+* Ekstensi ini dibuat untuk tujuan edukasi dan mempermudah scraping data publik.
+* Repository ini tidak meng-host file video anime apa pun di server GitHub. Semua konten dan video streaming disediakan langsung oleh masing-masing website penyedia pihak ketiga.
