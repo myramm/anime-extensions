@@ -1,0 +1,105 @@
+name: Build Indonesian Anime Extensions
+
+on:
+  push:
+    branches:
+      - master
+      - main
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: Build Indonesian Extensions
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          java-version: '17'
+          distribution: 'temurin'
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v4
+
+      - name: Build All Indonesian Extensions
+        run: |
+          chmod +x gradlew
+          ./gradlew assembleDebug --no-daemon --stacktrace
+
+      - name: Collect & Package APKs
+        id: collect_apks
+        run: |
+          mkdir -p dist
+          SHORT_SHA=$(git rev-parse --short HEAD)
+          echo "COMMIT_SHA=$SHORT_SHA" >> $GITHUB_ENV
+
+          echo "Collecting APK files..."
+          find src/id -type f -name "*.apk" | while read -r apk; do
+            ext_name=$(echo "$apk" | awk -F'/' '{print $3}')
+            filename=$(basename "$apk")
+            target_name="aniyomi-id-${ext_name}-v${SHORT_SHA}.apk"
+            echo "Copying $apk -> dist/$target_name"
+            cp "$apk" "dist/$target_name"
+          done
+
+          cd dist
+          sha256sum *.apk > sha256sums.txt
+          CHECKSUMS=$(cat sha256sums.txt)
+          cd ..
+
+          echo "CHECKSUMS<<EOF" >> $GITHUB_ENV
+          echo "$CHECKSUMS" >> $GITHUB_ENV
+          echo "EOF" >> $GITHUB_ENV
+
+      - name: Upload APK Artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: Indonesian-Extensions-${{ env.COMMIT_SHA }}
+          path: dist/*
+          retention-days: 30
+
+      - name: Publish to GitHub Releases
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: extensions-${{ env.COMMIT_SHA }}
+          name: Indonesian Anime Extensions (${{ env.COMMIT_SHA }})
+          body: |
+            ### 🇮🇩 Indonesian Anime Extensions
+
+            - **Commit**: [${{ github.sha }}](${{ github.server_url }}/${{ github.repository }}/commit/${{ github.sha }})
+            - **Ekstensi yang Tersedia**:
+              * OtakuDesu
+              * Samehadaku
+              * AnimeIndo
+              * Kuramanime
+              * Kuronime
+              * Neonime
+              * Nimegami
+              * Oploverz
+              * Minioppai
+
+            #### Checksums (SHA-256):
+            ```text
+            ${{ env.CHECKSUMS }}
+            ```
+          files: |
+            dist/*.apk
+            dist/sha256sums.txt
+          draft: false
+          prerelease: false
+          make_latest: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
