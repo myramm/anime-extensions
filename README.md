@@ -4,17 +4,41 @@
 
 Koleksi ekstensi anime khusus **Bahasa Indonesia (ID)** untuk aplikasi [**Aniyomi**](https://github.com/myramm/aniyomi).
 
-[![Build Indonesian Extensions](https://github.com/myramm/aniyomi-extensions/actions/workflows/build_extensions.yml/badge.svg)](https://github.com/myramm/aniyomi-extensions/actions/workflows/build_extensions.yml)
-[![Releases](https://img.shields.io/github/v/release/myramm/aniyomi-extensions?color=blue&label=Download%20APK)](https://github.com/myramm/aniyomi-extensions/releases)
-[![License](https://img.shields.io/badge/License-Apache%202.0-green.svg)](https://opensource.org/licenses/Apache-2.0)
+| Install on Aniyomi | Build Status | Download APK |
+|:------------------:|:------------:|:------------:|
+| [![Install on Aniyomi](https://img.shields.io/badge/Click%20here%20to%20install%20repo-gray?style=for-the-badge&labelColor=red&logo=android)](https://intradeus.github.io/http-protocol-redirector/?r=aniyomi://add-repo?url=https://raw.githubusercontent.com/myramm/aniyomi-extensions/repo/index.min.json) | [![Build Indonesian Extensions](https://github.com/myramm/aniyomi-extensions/actions/workflows/build_extensions.yml/badge.svg)](https://github.com/myramm/aniyomi-extensions/actions/workflows/build_extensions.yml) | [![Releases](https://img.shields.io/github/v/release/myramm/aniyomi-extensions?color=blue&label=Download%20APK)](https://github.com/myramm/aniyomi-extensions/releases) |
 
 </div>
 
 ---
 
-## 🇮🇩 Daftar Ekstensi Anime Indonesia
+## 🔗 Cara Menambahkan Repository ke Aniyomi
 
-Berikut adalah daftar sumber anime Indonesia yang didukung dalam repository ini:
+### 1. Otomatis (1-Klik)
+Klik tombol di bawah ini langsung dari HP Android Anda (pastikan aplikasi Aniyomi sudah terinstall):
+
+[![Install on Aniyomi](https://img.shields.io/badge/Tambahkan%20Repo%20ke%20Aniyomi-Klik%20Disini-red?style=for-the-badge&logo=android)](https://intradeus.github.io/http-protocol-redirector/?r=aniyomi://add-repo?url=https://raw.githubusercontent.com/myramm/aniyomi-extensions/repo/index.min.json)
+
+---
+
+### 2. Manual (Copy URL JSON Raw)
+Salin URL raw JSON di bawah ini:
+
+```text
+https://raw.githubusercontent.com/myramm/aniyomi-extensions/repo/index.min.json
+```
+
+**Langkah menambahkan di aplikasi Aniyomi:**
+1. Buka aplikasi **Aniyomi**.
+2. Masuk ke **More (Lainnya)** ➔ **Settings (Pengaturan)** ➔ **Browse (Jelajahi)**.
+3. Pilih **Extension repositories (Repositori ekstensi)**.
+4. Klik tombol **Add repository (Tambah repositori)**.
+5. Tempel (*paste*) URL di atas lalu simpan.
+6. Masuk ke tab **Browse ➔ Extensions**, semua ekstensi anime Indonesia akan muncul dan bisa di-install langsung dari dalam aplikasi!
+
+---
+
+## 🇮🇩 Daftar Ekstensi Anime Indonesia
 
 | Sumber / Ekstensi | Status | Modul |
 | :--- | :---: | :--- |
@@ -30,33 +54,25 @@ Berikut adalah daftar sumber anime Indonesia yang didukung dalam repository ini:
 
 ---
 
-## 📥 Cara Download & Install Ekstensi
+## 📥 Download APK Manual
 
-1. Buka halaman [**GitHub Releases**](https://github.com/myramm/aniyomi-extensions/releases/latest).
-2. Pilih dan download file `.apk` ekstensi anime yang ingin Anda gunakan (misal `aniyomi-id-samehadaku-*.apk`).
-3. Install file APK tersebut di HP Android Anda.
-4. Buka aplikasi **Aniyomi** ➔ Masuk ke menu **Browse (Jelajahi)** ➔ Ekstensi akan langsung muncul dan siap digunakan untuk streaming anime.
+Jika Anda tidak ingin menambahkan URL repository dan lebih memilih download file APK secara manual:
+👉 [**Download APK di GitHub Releases**](https://github.com/myramm/aniyomi-extensions/releases/latest)
 
 ---
 
 ## 🛠️ Panduan Pengembangan (Development)
 
-Jika Anda ingin mengedit atau menambahkan ekstensi baru secara lokal:
+Jika ingin mengedit atau menambahkan ekstensi baru:
 
-### 1. Compile & Cek Error
 ```bash
-# Ganti dengan nama modul ekstensi yang ingin dicek
+# Cek compile kode
 ./gradlew :src:id:samehadaku:compileDebugKotlin
-```
 
-### 2. Build APK Ekstensi Tertentu
-```bash
+# Build APK lokal
 ./gradlew :src:id:samehadaku:assembleDebug
-```
-*File APK hasil kompilasi akan berada di folder `src/id/<nama>/build/outputs/apk/debug/`.*
 
-### 3. Build Semua Ekstensi Sekaligus
-```bash
+# Build seluruh ekstensi
 ./gradlew assembleDebug
 ```
 
@@ -65,4 +81,4 @@ Jika Anda ingin mengedit atau menambahkan ekstensi baru secara lokal:
 ## ⚖️ Disclaimer
 
 * Ekstensi ini dibuat untuk tujuan edukasi dan mempermudah scraping data publik.
-* Repository ini tidak meng-host file video anime apa pun di server GitHub. Semua konten dan video streaming disediakan langsung oleh masing-masing website penyedia pihak ketiga.
+* Repository ini tidak meng-host file video anime apa pun. Semua konten disediakan langsung oleh masing-masing website penyedia pihak ketiga.

@@ -25,6 +25,11 @@ jobs:
         with:
           fetch-depth: 0
 
+      - name: Set up Python 3.10
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.10'
+
       - name: Set up JDK 17
         uses: actions/setup-java@v4
         with:
@@ -39,22 +44,32 @@ jobs:
           chmod +x gradlew
           ./gradlew assembleDebug --no-daemon --stacktrace
 
-      - name: Collect & Package APKs
-        id: collect_apks
+      - name: Create Extension Repo (index.min.json)
+        id: create_repo
         run: |
-          mkdir -p dist
+          mkdir -p repo/apk repo/icon dist
           SHORT_SHA=$(git rev-parse --short HEAD)
           echo "COMMIT_SHA=$SHORT_SHA" >> $GITHUB_ENV
 
-          echo "Collecting APK files..."
+          # Copy APKs to repo/apk and dist/
           find src/id -type f -name "*.apk" | while read -r apk; do
             ext_name=$(echo "$apk" | awk -F'/' '{print $3}')
-            filename=$(basename "$apk")
-            target_name="aniyomi-id-${ext_name}-v${SHORT_SHA}.apk"
-            echo "Copying $apk -> dist/$target_name"
-            cp "$apk" "dist/$target_name"
+            target_name="aniyomi-id-${ext_name}.apk"
+            echo "Copying $apk -> repo/apk/$target_name"
+            cp "$apk" "repo/apk/$target_name"
+            cp "$apk" "dist/aniyomi-id-${ext_name}-v${SHORT_SHA}.apk"
           done
 
+          # Download Inspector and generate index.min.json
+          echo "Downloading Inspector..."
+          INSPECTOR_LINK=$(curl -s "https://api.github.com/repos/komikku-app/aniyomi-extensions-inspector/releases/latest" | jq -r '.assets[0].browser_download_url')
+          curl -L "$INSPECTOR_LINK" -o ./Inspector.jar
+          java -jar ./Inspector.jar "repo/apk" "output.json" "tmp"
+
+          echo "Generating repo metadata..."
+          python ./.github/scripts/create-repo.py
+
+          # Checksum
           cd dist
           sha256sum *.apk > sha256sums.txt
           CHECKSUMS=$(cat sha256sums.txt)
@@ -63,6 +78,14 @@ jobs:
           echo "CHECKSUMS<<EOF" >> $GITHUB_ENV
           echo "$CHECKSUMS" >> $GITHUB_ENV
           echo "EOF" >> $GITHUB_ENV
+
+      - name: Deploy Repo to GitHub (branch: repo)
+        uses: peaceiris/actions-gh-pages@v4
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          publish_branch: repo
+          publish_dir: ./repo
+          keep_files: false
 
       - name: Upload APK Artifacts
         uses: actions/upload-artifact@v4
@@ -80,16 +103,8 @@ jobs:
             ### 🇮🇩 Indonesian Anime Extensions
 
             - **Commit**: [${{ github.sha }}](${{ github.server_url }}/${{ github.repository }}/commit/${{ github.sha }})
-            - **Ekstensi yang Tersedia**:
-              * OtakuDesu
-              * Samehadaku
-              * AnimeIndo
-              * Kuramanime
-              * Kuronime
-              * Neonime
-              * Nimegami
-              * Oploverz
-              * Minioppai
+            - **Extension Repo Raw JSON**:
+              `https://raw.githubusercontent.com/${{ github.repository }}/repo/index.min.json`
 
             #### Checksums (SHA-256):
             ```text
