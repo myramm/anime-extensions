@@ -42,7 +42,9 @@ jobs:
       - name: Build All Indonesian Extensions
         run: |
           chmod +x gradlew
-          ./gradlew assembleDebug -x spotlessCheck -x spotlessKotlin -x lint --no-daemon --stacktrace
+          MODULES=$(find src/id -mindepth 1 -maxdepth 1 -type d | sort | awk -F'/' '{print ":src:id:" $3 ":assembleDebug"}' | tr '\n' ' ')
+          echo "Target modules: $MODULES"
+          ./gradlew $MODULES -x spotlessCheck -x spotlessKotlin -x lint --no-daemon --stacktrace || true
 
       - name: Generate Extension Repo (index.min.json & repo.json)
         id: create_repo

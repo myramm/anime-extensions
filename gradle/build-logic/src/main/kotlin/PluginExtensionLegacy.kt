@@ -145,7 +145,9 @@ class PluginExtensionLegacy : Plugin<Project> {
                     keepRules.addGeneratedSourceDirectory(task) { it.outputDir }
                 }
 
-                variant.sources.manifests.addStaticManifestFile("AndroidManifest.xml")
+                if (file("AndroidManifest.xml").exists()) {
+                    variant.sources.manifests.addStaticManifestFile("AndroidManifest.xml")
+                }
             }
         }
 
