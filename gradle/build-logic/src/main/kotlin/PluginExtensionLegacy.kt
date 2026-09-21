@@ -85,6 +85,15 @@ class PluginExtensionLegacy : Plugin<Project> {
             }
 
             signingConfigs {
+                getByName("debug") {
+                    val customDebug = rootProject.file("common/debug.keystore")
+                    if (customDebug.exists()) {
+                        storeFile = customDebug
+                        storePassword = "android"
+                        keyAlias = "androiddebugkey"
+                        keyPassword = "android"
+                    }
+                }
                 create("release") {
                     storeFile = rootProject.file("signingkey.jks")
                     storePassword = providers.environmentVariable("KEY_STORE_PASSWORD").orNull
@@ -94,6 +103,9 @@ class PluginExtensionLegacy : Plugin<Project> {
             }
 
             buildTypes {
+                named("debug") {
+                    signingConfig = signingConfigs.getByName("debug")
+                }
                 named("release") {
                     signingConfig = if (rootProject.file("signingkey.jks").exists()) {
                         signingConfigs.getByName("release")
