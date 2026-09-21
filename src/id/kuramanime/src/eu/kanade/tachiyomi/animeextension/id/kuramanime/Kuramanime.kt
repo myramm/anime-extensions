@@ -5,7 +5,6 @@ import androidx.preference.EditTextPreference
 import androidx.preference.ListPreference
 import androidx.preference.PreferenceScreen
 import androidx.preference.SwitchPreferenceCompat
-import aniyomi.lib.cloudflareinterceptor.CloudflareInterceptor
 import aniyomi.lib.doodextractor.DoodExtractor
 import aniyomi.lib.filemoonextractor.FilemoonExtractor
 import aniyomi.lib.streamtapeextractor.StreamTapeExtractor
@@ -26,6 +25,9 @@ import keiyoushi.utils.parallelCatchingFlatMapBlocking
 import keiyoushi.utils.useAsJsoup
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
+import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.jsonObject
+import kotlinx.serialization.json.jsonPrimitive
 import okhttp3.FormBody
 import okhttp3.HttpUrl.Companion.toHttpUrl
 import okhttp3.Interceptor
@@ -39,6 +41,7 @@ import okhttp3.ResponseBody.Companion.toResponseBody
 import org.jsoup.Jsoup
 import org.jsoup.nodes.Document
 import org.jsoup.nodes.Element
+import uy.kohesive.injekt.injectLazy
 
 class Kuramanime :
     ParsedAnimeHttpLegacySource(),
@@ -54,11 +57,11 @@ class Kuramanime :
     override val supportsLatest = true
 
     private val preferences by getPreferencesLazy()
+    private val json: Json by injectLazy()
 
     override val client: OkHttpClient by lazy {
-        network.client.newBuilder()
-            .addInterceptor(ScraperFallbackInterceptor(preferences))
-            .addNetworkInterceptor(CloudflareInterceptor(network.client))
+        network.cloudflareClient.newBuilder()
+            .addInterceptor(ScraperFallbackInterceptor(preferences, json))
             .build()
     }
 
@@ -465,8 +468,8 @@ class Kuramanime :
 
         SwitchPreferenceCompat(screen.context).apply {
             key = PREF_USE_SCRAPER_KEY
-            title = "Gunakan Fallback Scraper API"
-            summary = "Gunakan Scraper API eksternal jika request terhalang proteksi Cloudflare WAF"
+            title = "Gunakan Scraper API Fallback"
+            summary = "Otomatis bypass proteksi jika request langsung terhalang"
             setDefaultValue(true)
 
             setOnPreferenceChangeListener { _, newValue ->
@@ -489,30 +492,44 @@ class Kuramanime :
     }
 
     /**
-     * Interceptor to fallback to external Scraper API (e.g. https://rbot.duar.eu.cc)
-     * if direct request gets HTTP 403 / 503 challenge.
+     * Interceptor to gracefully fallback to external Scraper API (e.g. https://rbot.duar.eu.cc)
+     * if direct request gets HTTP 403 / 503 / challenge.
      */
     private class ScraperFallbackInterceptor(
         private val preferences: SharedPreferences,
+        private val json: Json,
     ) : Interceptor {
         override fun intercept(chain: Interceptor.Chain): Response {
             val request = chain.request()
-            val response = chain.proceed(request)
-
             val useScraper = preferences.getBoolean(PREF_USE_SCRAPER_KEY, true)
             val scraperApi = preferences.getString(PREF_SCRAPER_URL_KEY, DEFAULT_SCRAPER_URL)!!.trimEnd('/')
 
             val host = request.url.host
             if (!useScraper || host.contains("duar.eu.cc") || request.url.encodedPath.contains("cf-clearance-scraper")) {
-                return response
+                return chain.proceed(request)
             }
 
-            val isBlocked = response.code in listOf(403, 503) ||
-                response.header("cf-mitigated") != null
+            var directResponse: Response? = null
+            var needFallback = false
 
-            if (isBlocked && request.method == "GET") {
-                response.close()
-                return try {
+            try {
+                val res = chain.proceed(request)
+                if (res.code in listOf(403, 503) || res.header("cf-mitigated") != null) {
+                    needFallback = true
+                    res.close()
+                } else {
+                    directResponse = res
+                }
+            } catch (e: Exception) {
+                needFallback = true
+            }
+
+            if (directResponse != null) {
+                return directResponse
+            }
+
+            if (needFallback && request.method == "GET") {
+                try {
                     val jsonPayload = """{"url":"${request.url}","mode":"source"}"""
                     val scraperRequest = Request.Builder()
                         .url("$scraperApi/cf-clearance-scraper")
@@ -522,23 +539,24 @@ class Kuramanime :
 
                     val scraperResponse = chain.proceed(scraperRequest)
                     if (scraperResponse.isSuccessful) {
-                        val html = scraperResponse.body.string()
-                        Response.Builder()
+                        val bodyText = scraperResponse.body.string()
+                        val htmlContent = runCatching {
+                            val parsedJson = json.parseToJsonElement(bodyText).jsonObject
+                            parsedJson["source"]?.jsonPrimitive?.content ?: bodyText
+                        }.getOrDefault(bodyText)
+
+                        return Response.Builder()
                             .request(request)
                             .protocol(Protocol.HTTP_1_1)
                             .code(200)
                             .message("OK (via Scraper)")
-                            .body(html.toResponseBody("text/html; charset=utf-8".toMediaType()))
+                            .body(htmlContent.toResponseBody("text/html; charset=utf-8".toMediaType()))
                             .build()
-                    } else {
-                        scraperResponse
                     }
-                } catch (e: Exception) {
-                    chain.proceed(request)
-                }
+                } catch (_: Exception) {}
             }
 
-            return response
+            return chain.proceed(request)
         }
     }
 
