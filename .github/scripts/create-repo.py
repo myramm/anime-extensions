@@ -87,3 +87,29 @@ for apk in REPO_APK_DIR.iterdir():
 
 with REPO_DIR.joinpath("index.min.json").open("w", encoding="utf-8") as index_file:
     json.dump(index_min_data, index_file, ensure_ascii=False, separators=(",", ":"))
+
+with REPO_DIR.joinpath("index.json").open("w", encoding="utf-8") as index_file:
+    json.dump(index_min_data, index_file, ensure_ascii=False, indent=2)
+
+fingerprint = ""
+try:
+    first_apk = next(REPO_APK_DIR.glob("*.apk"))
+    cert_out = subprocess.check_output(["keytool", "-printcert", "-jarfile", str(first_apk)]).decode()
+    for line in cert_out.splitlines():
+        if "SHA256:" in line or "SHA-256:" in line:
+            fingerprint = line.split(":", 1)[1].strip().replace(":", "").lower()
+            break
+except Exception as e:
+    pass
+
+repo_meta = {
+    "meta": {
+        "name": "Aniyomi Indonesia",
+        "shortName": "Aniyomi-ID",
+        "website": "https://github.com/myramm/aniyomi-extensions",
+        "signingKeyFingerprint": fingerprint
+    }
+}
+with REPO_DIR.joinpath("repo.json").open("w", encoding="utf-8") as repo_file:
+    json.dump(repo_meta, repo_file, ensure_ascii=False, indent=2)
+

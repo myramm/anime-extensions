@@ -22,10 +22,16 @@ Klik tombol di bawah ini langsung dari HP Android Anda (pastikan aplikasi Aniyom
 ---
 
 ### 2. Manual (Copy URL JSON Raw)
-Salin URL raw JSON di bawah ini:
+Salin salah satu URL repository di bawah ini:
 
+* **Format Index (`index.min.json`)**:
 ```text
 https://raw.githubusercontent.com/myramm/aniyomi-extensions/repo/index.min.json
+```
+
+* **Format Repo (`repo.json`)**:
+```text
+https://raw.githubusercontent.com/myramm/aniyomi-extensions/repo/repo.json
 ```
 
 **Langkah menambahkan di aplikasi Aniyomi:**
