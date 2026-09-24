@@ -268,9 +268,10 @@ class Animasu :
             serverList.add(Pair(extractIframeUrl(defaultIframe), "Default"))
         }
 
-        return serverList.distinctBy { it.first }.parallelCatchingFlatMapBlocking { (url, name) ->
-            getVideoList(url, name)
-        }.distinctBy { it.url }
+        val videos: List<Video> = serverList.distinctBy { it.first }.parallelCatchingFlatMapBlocking { server ->
+            getVideoList(server.first, server.second)
+        }
+        return videos.distinctBy { it.videoUrl ?: it.url }
     }
 
     override suspend fun getHosterUrl(element: Element): String {
@@ -360,7 +361,7 @@ class Animasu :
                     } else {
                         val src = doc.selectFirst("video source, video")?.attr("src")
                         if (!src.isNullOrBlank()) {
-                            listOf(Video(src, if (name.isNotBlank()) name else "Filedon", src, r2Headers))
+                            listOf(Video(videoUrl = src, quality = if (name.isNotBlank()) name else "Filedon", videoUrl = src, headers = r2Headers))
                         } else emptyList()
                     }
                 }
@@ -407,7 +408,13 @@ class Animasu :
 
                 // Pixeldrain
                 "pixeldrain" in lowerName || "pixeldrain" in lowerUrl -> {
-                    pixelDrainExtractor.videosFromUrl(url, prefix = if (name.isNotBlank()) "$name - " else "")
+                    val id = Regex("""/(?:u|file)/([a-zA-Z0-9]+)""").find(url)?.groupValues?.get(1)
+                    if (!id.isNullOrBlank()) {
+                        val dlUrl = "https://pixeldrain.com/api/file/$id?download"
+                        listOf(Video(dlUrl, "${if (name.isNotBlank()) "$name - " else ""}PixelDrain", dlUrl, cleanHeaders))
+                    } else {
+                        pixelDrainExtractor.videosFromUrl(url, prefix = if (name.isNotBlank()) "$name - " else "")
+                    }
                 }
 
                 // DoodStream

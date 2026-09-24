@@ -1,14 +1,10 @@
 package eu.kanade.tachiyomi.animeextension.id.otakudesu
 
-import android.util.Base64
-import androidx.preference.ListPreference
-import androidx.preference.PreferenceScreen
 import aniyomi.lib.bloggerextractor.BloggerExtractor
 import aniyomi.lib.mp4uploadextractor.Mp4uploadExtractor
 import aniyomi.lib.streamwishextractor.StreamWishExtractor
 import aniyomi.lib.vidhideextractor.VidHideExtractor
 import aniyomi.lib.youruploadextractor.YourUploadExtractor
-import eu.kanade.tachiyomi.animesource.ConfigurableAnimeSource
 import eu.kanade.tachiyomi.animesource.model.AnimeFilter
 import eu.kanade.tachiyomi.animesource.model.AnimeFilterList
 import eu.kanade.tachiyomi.animesource.model.AnimesPage
@@ -18,14 +14,15 @@ import eu.kanade.tachiyomi.animesource.model.Video
 import eu.kanade.tachiyomi.network.GET
 import eu.kanade.tachiyomi.network.POST
 import eu.kanade.tachiyomi.network.awaitSuccess
-import keiyoushi.utils.ParsedAnimeHttpLegacySource
+import keiyoushi.utils.AnimeHttpLegacySource
+import keiyoushi.utils.b64Decode
 import keiyoushi.utils.bodyString
-import keiyoushi.utils.getPreferencesLazy
 import keiyoushi.utils.parallelCatchingFlatMapBlocking
 import keiyoushi.utils.parallelMapNotNullBlocking
 import keiyoushi.utils.tryParse
 import keiyoushi.utils.useAsJsoup
 import okhttp3.FormBody
+import okhttp3.Headers
 import okhttp3.Request
 import okhttp3.Response
 import org.json.JSONObject
@@ -35,117 +32,120 @@ import org.jsoup.nodes.Element
 import java.text.SimpleDateFormat
 import java.util.Locale
 
-class OtakuDesu :
-    ParsedAnimeHttpLegacySource(),
-    ConfigurableAnimeSource {
+class OtakuDesu : AnimeHttpLegacySource() {
+    override val name: String = "OtakuDesu"
 
-    override val name = "OtakuDesu"
+    override val baseUrl: String = "https://otakudesu.cloud"
 
-    override val baseUrl = "https://otakudesu.blog"
+    override val lang: String = "id"
 
-    override val lang = "id"
+    override val supportsLatest: Boolean = true
 
-    override val supportsLatest = true
+    override fun headersBuilder() = super.headersBuilder()
+        .add("Referer", "$baseUrl/")
+        .add("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
+        .add("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8")
 
-    private val preferences by getPreferencesLazy()
+    // ============================== Popular ===============================
+    override fun popularAnimeRequest(page: Int): Request = GET("$baseUrl/complete-anime/page/$page", headers)
 
-    // =========================== Anime Details ============================
-    override fun animeDetailsParse(document: Document): SAnime = SAnime.create().apply {
-        val info = document.selectFirst("div.infozingle")!!
-        title = info.getInfo("Judul") ?: ""
-        genre = info.getInfo("Genre")
-        status = parseStatus(info.getInfo("Status"))
-        artist = info.getInfo("Studio")
-        author = info.getInfo("Produser")
+    override fun popularAnimeParse(response: Response): AnimesPage = latestUpdatesParse(response)
 
-        description = buildString {
-            info.getInfo("Japanese", false)?.also { append("$it\n") }
-            info.getInfo("Skor", false)?.also { append("$it\n") }
-            info.getInfo("Total Episode", false)?.also { append("$it\n") }
-            append("\n\nSynopsis:\n")
-            document.select("div.sinopc > p").eachText().forEach { append("$it\n\n") }
-        }
+    // =============================== Latest ===============================
+    override fun latestUpdatesRequest(page: Int): Request = GET("$baseUrl/ongoing-anime/page/$page", headers)
+
+    override fun latestUpdatesParse(response: Response): AnimesPage {
+        val document = response.useAsJsoup()
+
+        val animes = document.select(latestUpdatesSelector()).map(::latestUpdatesFromElement)
+
+        val hasNextPage = document.selectFirst(latestUpdatesNextPageSelector()) != null
+
+        return AnimesPage(animes, hasNextPage)
     }
 
-    private fun parseStatus(statusString: String?): Int = when (statusString) {
-        "Ongoing" -> SAnime.ONGOING
-        "Completed" -> SAnime.COMPLETED
+    override fun latestUpdatesSelector(): String = "div.venomblist ul li div.detpost"
+
+    override fun latestUpdatesFromElement(element: Element): SAnime = SAnime.create().apply {
+        setUrlWithoutDomain(element.selectFirst("div.thumb a")!!.attr("href"))
+        title = element.selectFirst("div.thumb a div.thumbz h2")!!.text()
+        thumbnail_url = element.selectFirst("div.thumb a div.thumbz img")!!.attr("src")
+    }
+
+    override fun latestUpdatesNextPageSelector(): String = "div.pagination a.next"
+
+    // =========================== Anime Details ============================
+    override fun animeDetailsParse(response: Response): SAnime = animeDetailsParse(response.useAsJsoup())
+
+    override fun animeDetailsParse(document: Document): SAnime = SAnime.create().apply {
+        val detail = document.selectFirst("div.infozingle") ?: return@apply
+        title = detail.selectFirst("p:contains(Judul) span")!!.text().substringAfter(" ")
+        status = parseStatus(detail.selectFirst("p:contains(Status) span")!!.text().substringAfter(" "))
+        genre = detail.select("p:contains(Genre) span a").eachText().joinToString()
+        val ep = detail.selectFirst("p:contains(Total) span")!!.text().substringAfter(" ")
+        val score = detail.selectFirst("p:contains(Skor) span")!!.text().substringAfter(" ")
+        val studio = detail.selectFirst("p:contains(Studio) span")!!.text().substringAfter(" ")
+        val produser = detail.selectFirst("p:contains(Produser) span")!!.text().substringAfter(" ")
+        val sinopsis = document.select("div.sinopc p").eachText().joinToString("\n\n")
+
+        description = buildString {
+            if (sinopsis.isNotBlank()) append("$sinopsis\n\n")
+            if (score.isNotBlank()) append("Skor: $score\n")
+            if (ep.isNotBlank()) append("Total Episode: $ep\n")
+            if (studio.isNotBlank()) append("Studio: $studio\n")
+            if (produser.isNotBlank()) append("Produser: $produser\n")
+        }.trim()
+
+        thumbnail_url = document.selectFirst("div.fotoanime img")!!.attr("src")
+        initialized = true
+    }
+
+    private fun parseStatus(status: String): Int = when (status.trim().lowercase()) {
+        "completed" -> SAnime.COMPLETED
+        "ongoing" -> SAnime.ONGOING
         else -> SAnime.UNKNOWN
     }
 
     // ============================== Episodes ==============================
-    private val nameRegex by lazy { ".+?(?=Episode)|\\sSubtitle.+".toRegex() }
+    override fun episodeListParse(response: Response): List<SEpisode> {
+        val document = response.useAsJsoup()
+
+        return document.select(episodeListSelector()).map(::episodeFromElement)
+    }
+
+    override fun episodeListSelector(): String = "div.episodelist ul li"
+
+    private val episodePattern = Regex("""(?i)(?:Episode|Ep|Eps)\s*(\d+(?:\.\d+)?)""")
+    private val dateFormatter = SimpleDateFormat("dd MMMM, yyyy", Locale("id", "ID"))
+
     override fun episodeFromElement(element: Element): SEpisode = SEpisode.create().apply {
-        val link = element.selectFirst("span > a, a")!!
-        val text = link.text()
-        episode_number = text.substringAfter("Episode ")
-            .substringBefore(" ")
-            .toFloatOrNull() ?: 1F
+        val link = element.selectFirst("a") ?: throw Exception("Missing episode link")
         setUrlWithoutDomain(link.attr("href"))
-        name = text.replace(nameRegex, "").trim().ifEmpty { text }
-        date_upload = element.selectFirst("span.zeebr, span.date")?.text()?.let { DATE_FORMATTER.tryParse(it) } ?: 0L
+
+        val linkText = link.text().trim()
+        name = linkText
+
+        val numMatch = episodePattern.find(linkText)
+            ?: Regex("""(\d+(?:\.\d+)?)""").find(linkText)
+        episode_number = numMatch?.groupValues?.getOrNull(1)?.toFloatOrNull() ?: 1F
+
+        val dateStr = element.selectFirst("span.zeebr")?.text()?.trim()
+        date_upload = dateStr?.let { dateFormatter.tryParse(it) } ?: 0L
     }
-
-    override fun episodeListSelector() = "div.episodelist ul li:has(a[href*='/episode/']), div.episodelist ul li, #venkonten > div.venser > div:nth-child(8) > ul > li"
-
-    // =============================== Latest ===============================
-    override fun latestUpdatesFromElement(element: Element): SAnime = SAnime.create().apply {
-        setUrlWithoutDomain(element.attr("href"))
-        thumbnail_url = element.selectFirst("img")!!.attr("src")
-        title = element.selectFirst("h2")!!.text()
-    }
-
-    override fun latestUpdatesNextPageSelector() = "a.next.page-numbers"
-
-    override fun latestUpdatesRequest(page: Int) = GET("$baseUrl/ongoing-anime/page/$page")
-
-    override fun latestUpdatesSelector() = "div.detpost div.thumb > a"
-
-    // ============================== Popular ===============================
-    override fun popularAnimeFromElement(element: Element) = latestUpdatesFromElement(element)
-    override fun popularAnimeNextPageSelector() = latestUpdatesNextPageSelector()
-    override fun popularAnimeRequest(page: Int) = GET("$baseUrl/complete-anime/page/$page")
-    override fun popularAnimeSelector() = latestUpdatesSelector()
 
     // =============================== Search ===============================
-    override fun searchAnimeFromElement(element: Element): SAnime = throw UnsupportedOperationException()
-
-    private fun searchAnimeFromElement(element: Element, ui: String): SAnime = SAnime.create().apply {
-        when (ui) {
-            "search" -> {
-                val link = element.selectFirst("h2 > a")!!
-                setUrlWithoutDomain(link.attr("href"))
-                title = link.text().replace(" Subtitle Indonesia", "")
-                thumbnail_url = element.selectFirst("img")!!.attr("src")
-            }
-
-            else -> {
-                val link = element.selectFirst(".col-anime-title > a")!!
-                setUrlWithoutDomain(link.attr("href"))
-                title = link.text()
-                thumbnail_url = element.selectFirst(".col-anime-cover > img")!!.attr("src")
-            }
-        }
-    }
-
-    override fun searchAnimeNextPageSelector() = latestUpdatesNextPageSelector()
-
     override fun searchAnimeRequest(page: Int, query: String, filters: AnimeFilterList): Request {
-        val filterList = if (filters.isEmpty()) getFilterList() else filters
-        val genreFilter = filterList.find { it is GenreFilter } as GenreFilter
-
+        val filter = filters.filterIsInstance<GenreFilter>().firstOrNull()
         return when {
-            query.isNotBlank() -> GET("$baseUrl/?s=$query&post_type=anime")
-            genreFilter.state != 0 -> GET("$baseUrl/genres/${genreFilter.toUriPart()}/page/$page")
-            else -> GET("$baseUrl/complete-anime/page/$page")
+            query.isNotBlank() -> GET("$baseUrl/?s=$query&post_type=anime", headers)
+            filter != null && filter.toUriPart().isNotBlank() -> GET("$baseUrl/genres/${filter.toUriPart()}/page/$page", headers)
+            else -> latestUpdatesRequest(page)
         }
     }
-
-    override fun searchAnimeSelector() = "#venkonten > div > div.venser > div > div > ul > li"
-    private val genreSelector = ".col-anime"
 
     override fun searchAnimeParse(response: Response): AnimesPage {
         val document = response.useAsJsoup()
+        val genreSelector = "div.col-anime-con"
 
         val ui = when {
             document.selectFirst(genreSelector) == null -> "search"
@@ -164,29 +164,73 @@ class OtakuDesu :
         return AnimesPage(animes, hasNextPage)
     }
 
+    override fun searchAnimeSelector(): String = "ul.chivsrc li"
+
+    private fun searchAnimeFromElement(element: Element, ui: String): SAnime = SAnime.create().apply {
+        when (ui) {
+            "search" -> {
+                setUrlWithoutDomain(element.selectFirst("h2 a")!!.attr("href"))
+                title = element.selectFirst("h2 a")!!.text()
+                thumbnail_url = element.selectFirst("img")!!.attr("src")
+            }
+            "genres" -> {
+                setUrlWithoutDomain(element.selectFirst("div.col-anime-title a")!!.attr("href"))
+                title = element.selectFirst("div.col-anime-title a")!!.text()
+                thumbnail_url = element.selectFirst("div.col-anime-cover img")!!.attr("src")
+            }
+        }
+    }
+
+    override fun searchAnimeNextPageSelector(): String = "div.pagination a.next"
+
     // ============================ Video Links =============================
-    override fun videoListSelector() = "div.mirrorstream ul li > a, ul.m360p a, ul.m480p a, ul.m720p a"
+    override fun videoListSelector() = "div.mirrorstream ul li > a, ul.m360p a, ul.m480p a, ul.m720p a, ul.m1080p a, div.download ul li a"
 
     override fun videoListParse(response: Response): List<Video> {
         val doc = response.useAsJsoup()
         val script = doc.selectFirst("script:containsData(action:)")?.data().orEmpty()
 
-        val actions = Regex("""action:\s*"([a-f0-9]+)"""").findAll(script).map { it.groupValues[1] }.toList()
-        if (actions.isEmpty()) return emptyList()
+        val actions = Regex("""action:\s*["']([a-f0-9]+)["']""").findAll(script).map { it.groupValues[1] }.toList()
+        val ajaxVideos = if (actions.isNotEmpty()) {
+            val streamAction = actions[0]
+            val nonceAction = if (actions.size >= 2) actions[1] else actions[0]
+            val nonce = getNonce(nonceAction)
+            if (nonce.isNotBlank()) {
+                doc.select("div.mirrorstream ul li > a, ul.m360p a, ul.m480p a, ul.m720p a, ul.m1080p a")
+                    .parallelMapNotNullBlocking {
+                        runCatching { getEmbedLinks(it, streamAction, nonce) }.getOrNull()
+                    }
+                    .parallelCatchingFlatMapBlocking {
+                        getVideosFromEmbed(it.first, it.second)
+                    }
+            } else emptyList()
+        } else emptyList()
 
-        val streamAction = actions[0]
-        val nonceAction = if (actions.size >= 2) actions[1] else actions[0]
+        val iframeElements = doc.select("div.responsive-embed-stream iframe, div.embed_holder iframe, div#embed_holder iframe, iframe#p-iframe, .player-embed iframe")
+        val iframeVideos = iframeElements.mapNotNull {
+            val src = it.attr("src").ifEmpty { it.attr("data-src") }
+            if (src.isNotBlank()) Pair("Default", src) else null
+        }.parallelCatchingFlatMapBlocking {
+            getVideosFromEmbed(it.first, it.second)
+        }
 
-        val nonce = getNonce(nonceAction)
-        if (nonce.isBlank()) return emptyList()
-
-        return doc.select(videoListSelector())
-            .parallelMapNotNullBlocking {
-                runCatching { getEmbedLinks(it, streamAction, nonce) }.getOrNull()
+        val downloadElements = doc.select("div.download ul li, div.cukder ul li, div.download-eps ul li")
+        val downloadVideos = downloadElements.flatMap { li ->
+            val quality = li.selectFirst("strong, b, span.fl-l")?.text()?.trim() ?: "Download"
+            li.select("a[href]").mapNotNull { a ->
+                val server = a.text().trim()
+                val href = a.attr("href").trim()
+                if (href.startsWith("http")) {
+                    val name = if (server.isNotBlank()) "$server ($quality)" else quality
+                    Pair(name, href)
+                } else null
             }
-            .parallelCatchingFlatMapBlocking {
-                getVideosFromEmbed(it.first, it.second)
-            }
+        }.parallelCatchingFlatMapBlocking {
+            getVideosFromEmbed(it.first, it.second)
+        }
+
+        val allVideos = ajaxVideos + iframeVideos + downloadVideos
+        return allVideos.distinctBy { it.videoUrl ?: it.url }
     }
 
     private suspend fun getEmbedLinks(element: Element, action: String, nonce: String): Pair<String, String> {
@@ -207,7 +251,7 @@ class OtakuDesu :
             add("action", action)
         }.build()
 
-        val resp = client.newCall(POST("$baseUrl/wp-admin/admin-ajax.php", body = form))
+        val resp = client.newCall(POST("$baseUrl/wp-admin/admin-ajax.php", body = form, headers = headers))
             .awaitSuccess()
             .bodyString()
 
@@ -222,9 +266,7 @@ class OtakuDesu :
 
     private val bloggerExtractor by lazy { BloggerExtractor(client) }
     private val yourUploadExtractor by lazy { YourUploadExtractor(client) }
-    private val vidHideExtractor by lazy { VidHideExtractor(client, headers) }
     private val mp4uploadExtractor by lazy { Mp4uploadExtractor(client) }
-    private val streamWishExtractor by lazy { StreamWishExtractor(client, headers) }
 
     private suspend fun getVideosFromEmbed(server: String, link: String): List<Video> {
         if (link.isBlank()) return emptyList()
@@ -233,47 +275,85 @@ class OtakuDesu :
             .add("Referer", link)
             .build()
 
+        val cleanHeaders = Headers.Builder()
+            .add("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
+            .build()
+
         return runCatching {
             when {
-                // Filedon, Uservideo, Samevideo (Samehadaku style Inertia/R2 extraction)
+                // Filedon, Uservideo, Samevideo (Inertia R2 extraction)
                 "filedon" in link || "uservideo" in link || "userdrive" in link || "samevideo" in link -> {
-                    val doc = client.newCall(GET(link, videoHeaders)).awaitSuccess().useAsJsoup()
+                    val r2Headers = Headers.Builder()
+                        .add("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
+                        .add("Referer", link)
+                        .add("Accept", "*/*")
+                        .build()
+                    val doc = client.newCall(GET(link, r2Headers)).awaitSuccess().useAsJsoup()
                     val dataPage = doc.selectFirst("div#app")?.attr("data-page")
                     if (!dataPage.isNullOrBlank()) {
                         val json = JSONObject(dataPage)
                         val props = json.optJSONObject("props")
                         val videoUrl = props?.optString("url")
                         if (!videoUrl.isNullOrBlank()) {
-                            listOf(Video(videoUrl, server, videoUrl, videoHeaders))
+                            listOf(Video(videoUrl, server, videoUrl, r2Headers))
                         } else emptyList()
-                    } else emptyList()
+                    } else {
+                        val src = doc.selectFirst("video source, video")?.attr("src")
+                        if (!src.isNullOrBlank()) {
+                            listOf(Video(src, server, src, r2Headers))
+                        } else emptyList()
+                    }
                 }
 
                 // Blogger video
-                "blogger" in link || "bp.blogspot" in link -> {
-                    bloggerExtractor.videosFromUrl(link, headers, server)
+                "blogger" in link || "bp.blogspot" in link || "video.googleusercontent" in link -> {
+                    val bloggerHeaders = Headers.Builder()
+                        .add("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
+                        .add("Referer", "https://www.blogger.com/")
+                        .add("Accept", "*/*")
+                        .build()
+                    bloggerExtractor.videosFromUrl(link, bloggerHeaders, server)
                 }
 
                 // VidHide
-                "vidhide" in link || "odvidhide" in link -> {
-                    vidHideExtractor.videosFromUrl(link)
+                "vidhide" in link || "odvidhide" in link || "streamhide" in link -> {
+                    VidHideExtractor(client, cleanHeaders).videosFromUrl(link)
                 }
 
                 // YourUpload
                 "yourupload" in link -> {
                     val id = link.substringAfter("id=").substringBefore("&")
                     val url = if ("embed" in link) link else "https://yourupload.com/embed/$id"
-                    yourUploadExtractor.videoFromUrl(url, headers, server)
+                    val youruploadHeaders = Headers.Builder()
+                        .add("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
+                        .add("Referer", "https://www.yourupload.com/")
+                        .add("Accept", "*/*")
+                        .build()
+                    yourUploadExtractor.videoFromUrl(url, youruploadHeaders, server)
                 }
 
                 // Mp4upload
                 "mp4upload" in link -> {
-                    mp4uploadExtractor.videosFromUrl(link, headers)
+                    val mp4Headers = Headers.Builder()
+                        .add("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
+                        .add("Referer", "https://www.mp4upload.com/")
+                        .add("Accept", "*/*")
+                        .build()
+                    mp4uploadExtractor.videosFromUrl(link, mp4Headers)
                 }
 
                 // StreamWish / FileLions
-                "streamwish" in link || "filelions" in link || "wishembed" in link -> {
-                    streamWishExtractor.videosFromUrl(link, videoNameGen = { "$server - $it" })
+                "streamwish" in link || "filelions" in link || "wishembed" in link || "wishfast" in link -> {
+                    StreamWishExtractor(client, cleanHeaders).videosFromUrl(link, videoNameGen = { "$server - $it" })
+                }
+
+                // Pixeldrain
+                "pixeldrain" in link -> {
+                    val id = Regex("""/(?:u|file)/([a-zA-Z0-9]+)""").find(link)?.groupValues?.get(1)
+                    if (!id.isNullOrBlank()) {
+                        val dlUrl = "https://pixeldrain.com/api/file/$id?download"
+                        listOf(Video(dlUrl, "$server (PixelDrain)", dlUrl, cleanHeaders))
+                    } else emptyList()
                 }
 
                 // DesuStream / Odcdn
@@ -296,7 +376,11 @@ class OtakuDesu :
                 }
 
                 link.endsWith(".mp4") || link.endsWith(".m3u8") || link.contains(".mp4?") || link.contains(".m3u8?") -> {
-                    listOf(Video(link, server, link, videoHeaders))
+                    val streamHeaders = Headers.Builder()
+                        .add("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
+                        .add("Accept", "*/*")
+                        .build()
+                    listOf(Video(link, server, link, streamHeaders))
                 }
 
                 else -> emptyList()
@@ -307,7 +391,7 @@ class OtakuDesu :
     private fun getNonce(action: String): String {
         return runCatching {
             val form = FormBody.Builder().add("action", action).build()
-            client.newCall(POST("$baseUrl/wp-admin/admin-ajax.php", body = form))
+            client.newCall(POST("$baseUrl/wp-admin/admin-ajax.php", body = form, headers = headers))
                 .execute()
                 .bodyString()
                 .substringAfter(":\"")
@@ -348,7 +432,6 @@ class OtakuDesu :
                 Pair("Mystery", "mystery"),
                 Pair("Psychological", "psychological"),
                 Pair("Parody", "parody"),
-                Pair("Police", "police"),
                 Pair("Romance", "romance"),
                 Pair("Samurai", "samurai"),
                 Pair("School", "school"),
@@ -367,49 +450,13 @@ class OtakuDesu :
             ),
         )
 
-    private open class UriPartFilter(displayName: String, val vals: Array<Pair<String, String>>) : AnimeFilter.Select<String>(displayName, vals.map { it.first }.toTypedArray()) {
+    private open class UriPartFilter(
+        displayName: String,
+        private val vals: Array<Pair<String, String>>,
+    ) : AnimeFilter.Select<String>(
+        displayName,
+        vals.map { it.first }.toTypedArray(),
+    ) {
         fun toUriPart() = vals[state].second
-    }
-
-    // ============================== Settings ==============================
-    override fun setupPreferenceScreen(screen: PreferenceScreen) {
-        val videoQualityPref = ListPreference(screen.context).apply {
-            key = PREF_QUALITY_KEY
-            title = PREF_QUALITY_TITLE
-            entries = PREF_QUALITY_ENTRIES
-            entryValues = PREF_QUALITY_ENTRIES
-            setDefaultValue(PREF_QUALITY_DEFAULT)
-            summary = "%s"
-        }
-        screen.addPreference(videoQualityPref)
-    }
-
-    // ============================= Utilities ==============================
-    private fun Element.getInfo(info: String, cut: Boolean = true): String? = selectFirst("p > span:has(b:contains($info))")?.text()
-        ?.let {
-            when {
-                cut -> it.substringAfter(":")
-                else -> it
-            }.trim()
-        }
-
-    override fun List<Video>.sortVideos(): List<Video> {
-        val quality = preferences.getString(PREF_QUALITY_KEY, PREF_QUALITY_DEFAULT)!!
-        return sortedWith(
-            compareByDescending { it.videoTitle.contains(quality) },
-        )
-    }
-
-    private fun String.b64Decode(): String = String(Base64.decode(this, Base64.DEFAULT))
-
-    companion object {
-        private val DATE_FORMATTER by lazy {
-            SimpleDateFormat("d MMM,yyyy", Locale("id", "ID"))
-        }
-
-        private const val PREF_QUALITY_KEY = "preferred_quality"
-        private const val PREF_QUALITY_TITLE = "Preferred quality"
-        private const val PREF_QUALITY_DEFAULT = "1080p"
-        private val PREF_QUALITY_ENTRIES = arrayOf("1080p", "720p", "480p", "360p")
     }
 }

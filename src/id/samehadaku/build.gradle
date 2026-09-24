@@ -1,16 +1,16 @@
 ext {
-    extName = 'OtakuDesu'
-    extClass = '.OtakuDesu'
-    extVersionCode = 46
+    extName = 'Samehadaku'
+    extClass = '.Samehadaku'
+    extVersionCode = 11
 }
 
 apply plugin: "kei.plugins.extension.legacy"
 
 dependencies {
+    implementation(project(":lib:bloggerextractor"))
+    implementation(project(":lib:mp4uploadextractor"))
     implementation(project(":lib:youruploadextractor"))
     implementation(project(":lib:streamwishextractor"))
     implementation(project(":lib:vidhideextractor"))
-    implementation(project(":lib:mp4uploadextractor"))
-    implementation(project(":lib:bloggerextractor"))
     implementation(project(":lib:pixeldrainextractor"))
 }
