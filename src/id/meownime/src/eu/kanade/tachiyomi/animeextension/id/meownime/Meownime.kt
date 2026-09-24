@@ -249,7 +249,7 @@ class Meownime : ParsedAnimeHttpLegacySource() {
 
     override fun videoListParse(response: Response): List<Video> {
         val document = response.useAsJsoup()
-        val videos = mutableListOf<Video>()
+        val links = mutableListOf<Triple<String, String, String>>()
 
         document.select("div.soraddl tr, div.smokedl tr, div.download tr, .entry-content p").forEach { container ->
             val res = container.selectFirst(".reso, .res, strong, b")?.text()?.trim() ?: "Direct"
@@ -257,12 +257,14 @@ class Meownime : ParsedAnimeHttpLegacySource() {
                 val host = a.text().trim()
                 val link = a.attr("href").trim()
                 if (link.isNotBlank() && link.startsWith("http")) {
-                    videos.addAll(extractVideosFromLink(host, res, link))
+                    links.add(Triple(host, res, link))
                 }
             }
         }
 
-        return videos.distinctBy { it.videoUrl }
+        return links.parallelCatchingFlatMapBlocking { (host, res, link) ->
+            extractVideosFromLink(host, res, link)
+        }.distinctBy { it.videoUrl }
     }
 
     override suspend fun getVideoList(episode: SEpisode): List<Video> {
@@ -300,7 +302,7 @@ class Meownime : ParsedAnimeHttpLegacySource() {
         }
     }
 
-    private fun extractVideosFromLink(host: String, resolution: String, link: String): List<Video> {
+    private suspend fun extractVideosFromLink(host: String, resolution: String, link: String): List<Video> {
         if (link.isBlank()) return emptyList()
 
         val cleanHeaders = Headers.Builder()
@@ -325,7 +327,7 @@ class Meownime : ParsedAnimeHttpLegacySource() {
                     val reqHeaders = Headers.Builder()
                         .add("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36")
                         .build()
-                    val html = client.newCall(GET(link, reqHeaders)).execute().body.string()
+                    val html = client.newCall(GET(link, reqHeaders)).awaitSuccess().body.string()
                     val dlUrl = Regex("""https?://download\d+\.mediafire\.com/[^\s"']+""").find(html)?.value
                         ?: Jsoup.parse(html).selectFirst("a#downloadButton, a.popsok, a[aria-label='Download file']")?.attr("href")
                     if (!dlUrl.isNullOrBlank() && dlUrl.startsWith("http")) {
