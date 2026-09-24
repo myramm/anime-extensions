@@ -3,7 +3,7 @@ ext {
     extClass = '.Animasu'
     themePkg = 'animestream'
     baseUrl = 'https://animasu.love'
-    overrideVersionCode = 1
+    overrideVersionCode = 2
 }
 
 apply plugin: "kei.plugins.extension.legacy"
