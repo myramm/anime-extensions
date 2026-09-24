@@ -196,8 +196,8 @@ if not fingerprint:
 
 repo_meta = {
     "meta": {
-        "name": "Aniyomi Indonesia",
-        "shortName": "Aniyomi-ID",
+        "name": "Anime Extension",
+        "shortName": "Anime Extension",
         "website": "https://github.com/myramm/anime-repo",
         "signingKeyFingerprint": fingerprint
     }

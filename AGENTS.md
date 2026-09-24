@@ -6,7 +6,7 @@
 
 ## Project
 
-Yuzono Anikku/Aniyomi anime extensions – Kotlin + Jsoup/OkHttp scrapers. Each extension is a Gradle module `src/<lang>/<source>`; shared CMS logic lives as themes in `lib-multisrc/<theme>`; shared helpers in `lib/` and `core` (`keiyoushi.utils`, `keiyoushi.network`).
+Anime Extension – Anikku/Aniyomi anime extensions – Kotlin + Jsoup/OkHttp scrapers. Each extension is a Gradle module `src/<lang>/<source>`; shared CMS logic lives as themes in `lib-multisrc/<theme>`; shared helpers in `lib/` and `core` (`keiyoushi.utils`, `keiyoushi.network`).
 
 ## Commands
 

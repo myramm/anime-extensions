@@ -71,8 +71,8 @@ for item in index:
 with REMOTE_REPO.joinpath("index.min.json").open("w", encoding="utf-8") as index_min_file:
     json.dump(index, index_min_file, ensure_ascii=False, separators=(",", ":"))
 
-# Ensure repo.json exists
-if not REMOTE_REPO.joinpath("repo.json").exists() and LOCAL_REPO.joinpath("repo.json").exists():
+# Update repo.json
+if LOCAL_REPO.joinpath("repo.json").exists():
     shutil.copy(LOCAL_REPO.joinpath("repo.json"), REMOTE_REPO.joinpath("repo.json"))
 
 with REMOTE_REPO.joinpath("index.html").open("w", encoding="utf-8") as index_html_file:
