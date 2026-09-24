@@ -229,75 +229,29 @@ class Animasu :
     // ============================ Video Links =============================
     override fun videoListSelector() = "select.mirror option[value], select#selectserver option[value], ul.mirror a[data-em], div#pembed iframe, div.player-embed iframe"
 
-    override fun videoListParse(response: Response): List<Video> {
-        val document = response.useAsJsoup()
-        val videos = mutableListOf<Video>()
-
-        // 1. Check select.mirror option[value]
-        document.select("select.mirror option[value], select#selectserver option[value]").forEach { option ->
-            val value = option.attr("value").trim()
-            if (value.isNotBlank()) {
-                val serverName = option.text().trim()
-                val iframeUrl = extractIframeUrl(value)
-                if (iframeUrl.isNotBlank()) {
-                    runCatching {
-                        videos.addAll(getVideoListSync(iframeUrl, serverName))
-                    }
-                }
-            }
+    override suspend fun getHosterUrl(element: Element): String {
+        val rawData = when (element.tagName().lowercase()) {
+            "option" -> element.attr("value").trim()
+            "a" -> element.attr("data-em").trim()
+            "iframe" -> element.attr("src").trim()
+            else -> element.attr("href").trim()
         }
-
-        // 2. Check ul.mirror a[data-em]
-        document.select("ul.mirror a[data-em]").forEach { a ->
-            val dataEm = a.attr("data-em").trim()
-            if (dataEm.isNotBlank()) {
-                val serverName = a.text().trim().ifEmpty { "Server" }
-                val iframeUrl = extractIframeUrl(dataEm)
-                if (iframeUrl.isNotBlank()) {
-                    runCatching {
-                        videos.addAll(getVideoListSync(iframeUrl, serverName))
-                    }
-                }
-            }
-        }
-
-        // 3. Check direct iframe in #pembed or .player-embed if no videos found
-        if (videos.isEmpty()) {
-            document.select("div#pembed iframe, div.player-embed iframe, div.responsive-embed-stream iframe, div#embed_holder iframe").forEach { iframe ->
-                val src = iframe.attr("src").trim()
-                if (src.isNotBlank()) {
-                    val fixedSrc = when {
-                        src.startsWith("//") -> "https:$src"
-                        src.startsWith("/") -> "$baseUrl$src"
-                        else -> src
-                    }
-                    runCatching {
-                        videos.addAll(getVideoListSync(fixedSrc, "Default Server"))
-                    }
-                }
-            }
-        }
-
-        return videos.distinctBy { it.url }
+        if (rawData.isBlank()) return ""
+        return extractIframeUrl(rawData)
     }
 
     private fun extractIframeUrl(data: String): String {
-        val decoded = if (data.startsWith("http://") || data.startsWith("https://") || data.startsWith("//")) {
+        if (data.startsWith("http://") || data.startsWith("https://")) return data
+        if (data.startsWith("//")) return "https:$data"
+
+        val decoded = try {
+            String(Base64.decode(data, Base64.DEFAULT))
+        } catch (e: Exception) {
             data
-        } else {
-            try {
-                String(Base64.decode(data, Base64.DEFAULT))
-            } catch (e: Exception) {
-                data
-            }
         }
 
-        if (decoded.startsWith("http://") || decoded.startsWith("https://")) {
-            return decoded
-        }
-        if (decoded.startsWith("//")) {
-            return "https:$decoded"
-        }
+        if (decoded.startsWith("http://") || decoded.startsWith("https://")) return decoded
+        if (decoded.startsWith("//")) return "https:$decoded"
 
         val doc = Jsoup.parse(decoded)
         val src = doc.selectFirst("iframe")?.attr("src")
@@ -322,12 +276,10 @@ class Animasu :
     private val doodExtractor by lazy { DoodExtractor(client) }
 
     override suspend fun getVideoList(url: String, name: String): List<Video> {
-        return getVideoListSync(url, name)
-    }
-
-    private fun getVideoListSync(url: String, name: String): List<Video> {
+        if (url.isBlank()) return emptyList()
         val lowerName = name.lowercase()
         val lowerUrl = url.lowercase()
+
         return runCatching {
             when {
                 "streamtape" in lowerName || "streamtape" in lowerUrl ->
