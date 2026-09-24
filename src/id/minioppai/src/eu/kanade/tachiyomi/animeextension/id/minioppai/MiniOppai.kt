@@ -9,6 +9,7 @@ import eu.kanade.tachiyomi.animesource.model.Video
 import eu.kanade.tachiyomi.multisrc.animestream.AnimeStream
 import eu.kanade.tachiyomi.network.GET
 import keiyoushi.utils.tryParse
+import okhttp3.Headers
 import okhttp3.HttpUrl.Companion.toHttpUrl
 import okhttp3.Request
 import org.jsoup.nodes.Document
@@ -22,7 +23,7 @@ class MiniOppai :
         "MiniOppai",
         "https://minioppai.org",
     ) {
-    override fun headersBuilder() = super.headersBuilder().add("Referer", baseUrl)
+    override fun headersBuilder() = super.headersBuilder().add("Referer", "$baseUrl/")
 
     override val animeListUrl = "$baseUrl/anime-list"
 
@@ -37,17 +38,17 @@ class MiniOppai :
     override fun latestUpdatesRequest(page: Int) = GET("$animeListUrl/page/$page/?order=update")
 
     // ============================== Episodes ==============================
-    override fun episodeListSelector() = "div.epsdlist > ul > li > a"
+    override fun episodeListSelector() = "div.eplister > ul > li > a, div.epsdlist > ul > li > a, div.listeps ul li a"
 
     override fun episodeFromElement(element: Element): SEpisode = SEpisode.create().apply {
         setUrlWithoutDomain(element.attr("href"))
-        element.selectFirst(".epl-num")!!.text().let {
-            val num = it.substringAfterLast(" ")
-            episode_number = num.toFloatOrNull() ?: 0F
-            name = when {
-                it.contains("OVA", true) -> "OVA $num"
-                else -> "Episode $num"
-            }
+        val numText = element.selectFirst(".epl-num")?.text() ?: element.text().trim()
+        val num = numText.substringAfterLast(" ")
+        episode_number = num.toFloatOrNull() ?: 1F
+        name = when {
+            numText.contains("OVA", true) -> "OVA $num"
+            numText.isNotBlank() -> numText
+            else -> "Episode $num"
         }
         element.selectFirst(".epl-sub")?.text()?.let { scanlator = it }
         date_upload = element.selectFirst(".epl-date")?.text().let { dateFormatter.tryParse(it) } ?: 0L
@@ -55,6 +56,8 @@ class MiniOppai :
 
     // ============================ Video Links =============================
     override suspend fun getVideoList(url: String, name: String): List<Video> {
+        if (url.isBlank()) return emptyList()
+
         return when {
             "gdriveplayer" in url -> {
                 val playerUrl = buildString {
@@ -63,13 +66,33 @@ class MiniOppai :
                     if (data.startsWith("//")) append("https:")
                     append(data)
                 }
-                GdrivePlayerExtractor(client).videosFromUrl(playerUrl, name, headers)
+                val cleanHeaders = Headers.Builder()
+                    .add("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
+                    .build()
+                GdrivePlayerExtractor(client).videosFromUrl(playerUrl, name, cleanHeaders)
             }
 
-            "paistream.my.id" in url ->
+            "streampai" in url || "paistream" in url || "stream" in url ->
                 MiniOppaiExtractor(client).videosFromUrl(url, headers)
 
-            else -> emptyList()
+            url.endsWith(".mp4") || url.endsWith(".m3u8") || url.contains(".mp4?") || url.contains(".m3u8?") -> {
+                val streamHeaders = Headers.Builder()
+                    .add("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
+                    .build()
+                listOf(Video(url, if (name.isNotBlank()) name else "Direct", headers = streamHeaders))
+            }
+
+            else -> {
+                val videos = MiniOppaiExtractor(client).videosFromUrl(url, headers)
+                if (videos.isNotEmpty()) {
+                    videos
+                } else {
+                    val streamHeaders = Headers.Builder()
+                        .add("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
+                        .build()
+                    listOf(Video(url, if (name.isNotBlank()) name else "Stream", headers = streamHeaders))
+                }
+            }
         }
     }
 
@@ -81,12 +104,12 @@ class MiniOppai :
     }
 
     // =============================== Search ===============================
-    override fun searchAnimeSelector() = "div.latest article a.tip, div.listupd article a.tip, article.bs a.tip"
+    override fun searchAnimeSelector() = "div.latest article a.tip, div.listupd article a.tip, article.bs a.tip, div.listupd article.bsx a"
 
     override fun searchAnimeFromElement(element: Element): SAnime = SAnime.create().apply {
         setUrlWithoutDomain(element.attr("href"))
-        title = element.selectFirst("h2.entry-title")!!.ownText()
-        thumbnail_url = element.selectFirst("img")!!.getImageUrl()
+        title = element.selectFirst("h2.entry-title, div.title, div.tt")?.text()?.trim() ?: element.attr("title").trim()
+        thumbnail_url = element.selectFirst("img")?.getImageUrl()
     }
 
     override fun searchAnimeRequest(page: Int, query: String, filters: AnimeFilterList): Request {
