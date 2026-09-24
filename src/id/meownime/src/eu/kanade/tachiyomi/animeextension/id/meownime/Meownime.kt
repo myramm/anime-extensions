@@ -14,13 +14,19 @@ import keiyoushi.utils.ParsedAnimeHttpLegacySource
 import keiyoushi.utils.parallelCatchingFlatMapBlocking
 import keiyoushi.utils.useAsJsoup
 import okhttp3.Headers
+import okhttp3.MediaType.Companion.toMediaTypeOrNull
+import okhttp3.OkHttpClient
+import okhttp3.Protocol
 import okhttp3.Request
+import okhttp3.RequestBody.Companion.toRequestBody
 import okhttp3.Response
+import okhttp3.ResponseBody.Companion.toResponseBody
 import org.json.JSONArray
 import org.json.JSONObject
 import org.jsoup.Jsoup
 import org.jsoup.nodes.Document
 import org.jsoup.nodes.Element
+import java.util.concurrent.TimeUnit
 
 class Meownime : ParsedAnimeHttpLegacySource() {
     override val name: String = "Meownime"
@@ -30,6 +36,71 @@ class Meownime : ParsedAnimeHttpLegacySource() {
     override val lang: String = "id"
 
     override val supportsLatest: Boolean = true
+
+    private val solverClient by lazy {
+        OkHttpClient.Builder()
+            .connectTimeout(30, TimeUnit.SECONDS)
+            .readTimeout(45, TimeUnit.SECONDS)
+            .build()
+    }
+
+    override val client: OkHttpClient = network.cloudflareClient.newBuilder()
+        .addInterceptor { chain ->
+            val request = chain.request()
+            val response = try {
+                chain.proceed(request)
+            } catch (e: Exception) {
+                null
+            }
+
+            val isBlocked = if (response != null) {
+                val code = response.code
+                if (code in listOf(403, 503, 520, 521, 522, 524)) {
+                    true
+                } else if (response.isSuccessful) {
+                    val peek = runCatching { response.peekBody(1024).string() }.getOrDefault("")
+                    peek.contains("Just a moment...", ignoreCase = true) ||
+                        peek.contains("Attention Required! | Cloudflare", ignoreCase = true) ||
+                        peek.contains("challenge-running", ignoreCase = true)
+                } else false
+            } else true
+
+            if (isBlocked && request.url.host.contains("meownime", ignoreCase = true)) {
+                try {
+                    val payload = JSONObject().apply {
+                        put("url", request.url.toString())
+                        put("mode", "source")
+                    }.toString()
+                    val reqBody = payload.toRequestBody("application/json; charset=utf-8".toMediaTypeOrNull())
+                    val solverReq = Request.Builder()
+                        .url("https://rbot.duar.eu.cc/cf-clearance-scraper")
+                        .post(reqBody)
+                        .header("Content-Type", "application/json")
+                        .build()
+
+                    val solverResp = solverClient.newCall(solverReq).execute()
+                    val bodyStr = solverResp.body?.string().orEmpty()
+                    val json = JSONObject(bodyStr)
+                    val htmlSource = json.optString("source")
+                    val resCode = json.optInt("code", 200)
+
+                    if (htmlSource.isNotBlank() && resCode in 200..299) {
+                        response?.close()
+                        return@addInterceptor Response.Builder()
+                            .request(request)
+                            .protocol(Protocol.HTTP_1_1)
+                            .code(200)
+                            .message("OK (via Cloudflare Solver)")
+                            .headers(response?.headers ?: Headers.Builder().build())
+                            .body(htmlSource.toResponseBody("text/html; charset=UTF-8".toMediaTypeOrNull()))
+                            .build()
+                    }
+                } catch (_: Exception) {}
+            }
+
+            response ?: throw java.io.IOException("Request failed to ${request.url}")
+        }
+        .build()
 
     override fun headersBuilder() = super.headersBuilder()
         .add("Referer", "$baseUrl/")
