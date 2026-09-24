@@ -3,6 +3,7 @@ package eu.kanade.tachiyomi.animeextension.id.otakudesu
 import android.util.Base64
 import aniyomi.lib.bloggerextractor.BloggerExtractor
 import aniyomi.lib.mp4uploadextractor.Mp4uploadExtractor
+import aniyomi.lib.pixeldrainextractor.PixelDrainExtractor
 import aniyomi.lib.streamwishextractor.StreamWishExtractor
 import aniyomi.lib.vidhideextractor.VidHideExtractor
 import aniyomi.lib.youruploadextractor.YourUploadExtractor
@@ -35,7 +36,7 @@ import java.util.Locale
 class OtakuDesu : ParsedAnimeHttpLegacySource() {
     override val name: String = "OtakuDesu"
 
-    override val baseUrl: String = "https://otakudesu.cloud"
+    override val baseUrl: String = "https://otakudesu.blog"
 
     override val lang: String = "id"
 
@@ -49,36 +50,39 @@ class OtakuDesu : ParsedAnimeHttpLegacySource() {
     // ============================== Popular ===============================
     override fun popularAnimeRequest(page: Int): Request = GET("$baseUrl/complete-anime/page/$page", headers)
 
-    override fun popularAnimeSelector(): String = latestUpdatesSelector()
+    override fun popularAnimeSelector(): String = "div.venz ul li div.detpost, div.detpost"
 
     override fun popularAnimeFromElement(element: Element): SAnime = latestUpdatesFromElement(element)
 
-    override fun popularAnimeNextPageSelector(): String? = latestUpdatesNextPageSelector()
+    override fun popularAnimeNextPageSelector(): String? = "div.pagination a.next"
 
     // =============================== Latest ===============================
     override fun latestUpdatesRequest(page: Int): Request = GET("$baseUrl/ongoing-anime/page/$page", headers)
 
-    override fun latestUpdatesSelector(): String = "div.venomblist ul li div.detpost"
+    override fun latestUpdatesSelector(): String = "div.venz ul li div.detpost, div.detpost"
 
     override fun latestUpdatesFromElement(element: Element): SAnime = SAnime.create().apply {
-        setUrlWithoutDomain(element.selectFirst("div.thumb a")!!.attr("href"))
-        title = element.selectFirst("div.thumb a div.thumbz h2")!!.text()
-        thumbnail_url = element.selectFirst("div.thumb a div.thumbz img")!!.attr("src")
+        val link = element.selectFirst("div.thumb a, a") ?: return@apply
+        setUrlWithoutDomain(link.attr("href"))
+        title = element.selectFirst("div.thumb a div.thumbz h2, h2")?.text().orEmpty()
+        thumbnail_url = element.selectFirst("div.thumb a div.thumbz img, img")?.attr("src")
     }
 
     override fun latestUpdatesNextPageSelector(): String? = "div.pagination a.next"
 
     // =========================== Anime Details ============================
     override fun animeDetailsParse(document: Document): SAnime = SAnime.create().apply {
-        val detail = document.selectFirst("div.infozingle") ?: return@apply
-        title = detail.selectFirst("p:contains(Judul) span")!!.text().substringAfter(" ")
-        status = parseStatus(detail.selectFirst("p:contains(Status) span")!!.text().substringAfter(" "))
-        genre = detail.select("p:contains(Genre) span a").eachText().joinToString()
-        val ep = detail.selectFirst("p:contains(Total) span")!!.text().substringAfter(" ")
-        val score = detail.selectFirst("p:contains(Skor) span")!!.text().substringAfter(" ")
-        val studio = detail.selectFirst("p:contains(Studio) span")!!.text().substringAfter(" ")
-        val produser = detail.selectFirst("p:contains(Produser) span")!!.text().substringAfter(" ")
-        val sinopsis = document.select("div.sinopc p").eachText().joinToString("\n\n")
+        val detail = document.selectFirst("div.infozingle, div.infozin") ?: return@apply
+        title = detail.selectFirst("p:contains(Judul) span")?.text()?.substringAfter(" ").orEmpty()
+        status = parseStatus(detail.selectFirst("p:contains(Status) span")?.text()?.substringAfter(" ").orEmpty())
+        genre = detail.select("p:contains(Genre) span a, p:contains(Genre) a").eachText().joinToString()
+        val ep = detail.selectFirst("p:contains(Total) span")?.text()?.substringAfter(" ").orEmpty()
+        val score = detail.selectFirst("p:contains(Skor) span")?.text()?.substringAfter(" ").orEmpty()
+        val studio = detail.selectFirst("p:contains(Studio) span")?.text()?.substringAfter(" ").orEmpty()
+        val produser = detail.selectFirst("p:contains(Produser) span")?.text()?.substringAfter(" ").orEmpty()
+        val sinopsis = document.select("div.sinopc p").eachText().joinToString("\n\n").ifBlank {
+            document.selectFirst("div.sinopc")?.text().orEmpty()
+        }
 
         description = buildString {
             if (sinopsis.isNotBlank()) append("$sinopsis\n\n")
@@ -88,7 +92,7 @@ class OtakuDesu : ParsedAnimeHttpLegacySource() {
             if (produser.isNotBlank()) append("Produser: $produser\n")
         }.trim()
 
-        thumbnail_url = document.selectFirst("div.fotoanime img")!!.attr("src")
+        thumbnail_url = document.selectFirst("div.fotoanime img")?.attr("src")
         initialized = true
     }
 
@@ -208,11 +212,30 @@ class OtakuDesu : ParsedAnimeHttpLegacySource() {
                 } else null
             }
         }.parallelCatchingFlatMapBlocking { server ->
-            getVideosFromEmbed(server.first, server.second)
+            val resolvedUrl = resolveDesuLink(server.second)
+            getVideosFromEmbed(server.first, resolvedUrl)
         }
 
         val allVideos = ajaxVideos + iframeVideos + downloadVideos
         return allVideos.distinctBy { it.videoUrl }
+    }
+
+    private fun resolveDesuLink(link: String): String {
+        if (!link.contains("link.desustream.com")) return link
+        return runCatching {
+            val noRedirectClient = client.newBuilder().followRedirects(false).build()
+            val req = GET(link, headers)
+            val resp = noRedirectClient.newCall(req).execute()
+            val loc = resp.header("Location")
+            resp.close()
+            if (loc.isNullOrBlank()) return link
+            if ("desudrive.com/fl/?id=" in loc) {
+                val id = loc.substringAfter("id=")
+                "https://odvidhide.com/embed/$id"
+            } else {
+                loc
+            }
+        }.getOrDefault(link)
     }
 
     private fun String.b64Decode(): String = try {
@@ -255,12 +278,13 @@ class OtakuDesu : ParsedAnimeHttpLegacySource() {
     private val bloggerExtractor by lazy { BloggerExtractor(client) }
     private val yourUploadExtractor by lazy { YourUploadExtractor(client) }
     private val mp4uploadExtractor by lazy { Mp4uploadExtractor(client) }
+    private val pixelDrainExtractor by lazy { PixelDrainExtractor() }
 
     private suspend fun getVideosFromEmbed(server: String, link: String): List<Video> {
         if (link.isBlank()) return emptyList()
         val videoHeaders = headers.newBuilder()
             .set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
-            .add("Referer", link)
+            .set("Referer", link)
             .build()
 
         val cleanHeaders = Headers.Builder()
@@ -281,10 +305,25 @@ class OtakuDesu : ParsedAnimeHttpLegacySource() {
                     if (!dataPage.isNullOrBlank()) {
                         val json = JSONObject(dataPage)
                         val props = json.optJSONObject("props")
-                        val videoUrl = props?.optString("url")
-                        if (!videoUrl.isNullOrBlank()) {
-                            listOf(Video(videoUrl, server, headers = r2Headers))
-                        } else emptyList()
+                        val directUrl = props?.optString("url")
+                        if (!directUrl.isNullOrBlank()) {
+                            listOf(Video(directUrl, server, headers = r2Headers))
+                        } else {
+                            val fileObj = props?.optJSONObject("file") ?: props?.optJSONObject("files")
+                            val storage = fileObj?.optJSONObject("storage")
+                            val config = storage?.optJSONObject("config")
+                            val s3Url = config?.optString("s3_url")
+                            val path = fileObj?.optString("path")
+                            if (!s3Url.isNullOrBlank() && !path.isNullOrBlank()) {
+                                val fullUrl = "$s3Url/$path"
+                                listOf(Video(fullUrl, server, headers = r2Headers))
+                            } else {
+                                val src = doc.selectFirst("video source, video")?.attr("src")
+                                if (!src.isNullOrBlank()) {
+                                    listOf(Video(src, server, headers = r2Headers))
+                                } else emptyList()
+                            }
+                        }
                     } else {
                         val src = doc.selectFirst("video source, video")?.attr("src")
                         if (!src.isNullOrBlank()) {
@@ -337,28 +376,33 @@ class OtakuDesu : ParsedAnimeHttpLegacySource() {
 
                 // Pixeldrain
                 "pixeldrain" in link -> {
-                    val id = Regex("""/(?:u|file)/([a-zA-Z0-9]+)""").find(link)?.groupValues?.get(1)
+                    val id = Regex("""/(?:u|file|api/file)/([a-zA-Z0-9]+)""").find(link)?.groupValues?.get(1)
                     if (!id.isNullOrBlank()) {
                         val dlUrl = "https://pixeldrain.com/api/file/$id?download"
                         listOf(Video(dlUrl, "$server (PixelDrain)", headers = cleanHeaders))
-                    } else emptyList()
+                    } else {
+                        pixelDrainExtractor.videosFromUrl(link, "$server - ")
+                    }
                 }
 
-                // DesuStream / Odcdn
-                "desustream" in link || "odcdn" in link || "odstream" in link -> {
+                // DesuStream / Odcdn / Odstream / OtakuWatch
+                "desustream" in link || "odcdn" in link || "odstream" in link || "otakuwatch" in link -> {
                     runCatching {
                         val doc = client.newCall(GET(link, videoHeaders)).awaitSuccess().useAsJsoup()
-                        val script = doc.selectFirst("script:containsData(sources)")?.data().orEmpty()
-                        val videoUrl = script.substringAfter("sources:[{")
-                            .substringAfter("file':'")
-                            .substringBefore("'")
-                        if (videoUrl.isNotBlank() && (videoUrl.startsWith("http") || videoUrl.startsWith("//"))) {
-                            val fixedUrl = if (videoUrl.startsWith("//")) "https:$videoUrl" else videoUrl
+                        val videoSrc = doc.selectFirst("video source, video")?.attr("src").orEmpty()
+                        if (videoSrc.isNotBlank()) {
+                            val fixedUrl = if (videoSrc.startsWith("//")) "https:$videoSrc" else videoSrc
                             listOf(Video(fixedUrl, server, headers = videoHeaders))
                         } else {
-                            doc.selectFirst("video source")?.attr("src")?.takeIf(String::isNotBlank)?.let {
-                                listOf(Video(it, server, headers = videoHeaders))
-                            }.orEmpty()
+                            val script = doc.selectFirst("script:containsData(sources), script:containsData(file)")?.data().orEmpty()
+                            val videoUrl = script.substringAfter("file':'", "")
+                                .ifEmpty { script.substringAfter("file:\"", "") }
+                                .substringBefore("'")
+                                .substringBefore("\"")
+                            if (videoUrl.isNotBlank() && (videoUrl.startsWith("http") || videoUrl.startsWith("//"))) {
+                                val fixedUrl = if (videoUrl.startsWith("//")) "https:$videoUrl" else videoUrl
+                                listOf(Video(fixedUrl, server, headers = videoHeaders))
+                            } else emptyList()
                         }
                     }.getOrDefault(emptyList())
                 }
