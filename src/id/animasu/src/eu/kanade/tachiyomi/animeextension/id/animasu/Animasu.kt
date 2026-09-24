@@ -232,17 +232,18 @@ class Animasu :
     }
 
     // ============================ Video Links =============================
-    override fun videoListSelector() = "select.mirror option, select#selectserver option, ul.mirror a[data-em], div#pembed iframe, div.player-embed iframe, iframe#p-iframe"
+    // ============================ Video Links =============================
+    override fun videoListSelector() = "select.mirror option, select#selectserver option, ul.mirror a[data-em], div#pembed iframe, div.player-embed iframe, iframe#p-iframe, .player-embed iframe, div.responsive-embed-stream iframe, div#embed_holder iframe"
 
     override fun videoListParse(response: Response): List<Video> {
         val document = response.useAsJsoup()
-        val defaultIframe = document.selectFirst("div#pembed iframe, div.player-embed iframe, iframe#p-iframe, .player-embed iframe, iframe[src*=/embed]")
+        val defaultIframe = document.selectFirst("div#pembed iframe, div.player-embed iframe, iframe#p-iframe, .player-embed iframe, iframe[src*=/embed], div.responsive-embed-stream iframe, div#embed_holder iframe")
             ?.let { it.attr("src").ifEmpty { it.attr("data-src") } }
             ?.trim()
 
-        val items = document.select(videoListSelector())
+        val mirrorItems = document.select(videoListSelector())
 
-        val serverList = items.mapNotNull { element ->
+        val mirrorServerList = mirrorItems.mapNotNull { element ->
             val name = element.text().trim()
             val rawData = when (element.tagName().lowercase()) {
                 "option" -> element.attr("value").trim()
@@ -259,16 +260,41 @@ class Animasu :
                 ""
             }
 
-            if (url.isNotBlank()) {
+            if (url.isNotBlank() && !name.contains("Pilih", ignoreCase = true)) {
                 Pair(url, name.ifEmpty { "Default" })
             } else null
         }.toMutableList()
 
-        if (serverList.isEmpty() && !defaultIframe.isNullOrBlank()) {
-            serverList.add(Pair(extractIframeUrl(defaultIframe), "Default"))
+        if (mirrorServerList.isEmpty() && !defaultIframe.isNullOrBlank()) {
+            mirrorServerList.add(Pair(extractIframeUrl(defaultIframe), "Default"))
         }
 
-        val videos: List<Video> = serverList.distinctBy { it.first }.parallelCatchingFlatMapBlocking { server ->
+        // Parse Download section for all quality resolutions (360p, 480p, 720p, 1080p)
+        val downloadContainers = document.select("div.soradl, div.soraddl, div.soraurl, div.smokedl, div.download, div.download-eps, div.mctnx, div.bghome, .mctn, div.dlx, div.links_table")
+        val downloadEntries = downloadContainers.select("div.soraurlx, ul li, li, tr, p").ifEmpty { downloadContainers }
+        val downloadServerList = downloadEntries.flatMap { entry ->
+            val quality = entry.selectFirst("strong, b, span.fl-l, span, th, td.quality")?.text()?.trim() ?: "Download"
+            entry.select("a[href]").mapNotNull { a ->
+                val server = a.text().trim()
+                val href = a.attr("href").trim()
+                val lowerHref = href.lowercase()
+                val isSupported = href.startsWith("http") && (
+                    "filedon" in lowerHref || "pixeldrain" in lowerHref || "vidhide" in lowerHref ||
+                    "streamwish" in lowerHref || "blogger" in lowerHref || "blogspot" in lowerHref ||
+                    "mp4upload" in lowerHref || "yourupload" in lowerHref || "streamtape" in lowerHref ||
+                    "dood" in lowerHref || "ok.ru" in lowerHref || "gdrive" in lowerHref ||
+                    lowerHref.endsWith(".mp4") || lowerHref.endsWith(".m3u8")
+                )
+                if (isSupported) {
+                    val label = if (server.isNotBlank() && !quality.contains(server, ignoreCase = true)) "$server ($quality)" else quality
+                    Pair(href, label)
+                } else null
+            }
+        }
+
+        val allServers = (mirrorServerList + downloadServerList).distinctBy { "${it.first}|${it.second}" }
+
+        val videos: List<Video> = allServers.parallelCatchingFlatMapBlocking { server ->
             getVideoList(server.first, server.second)
         }
         return videos.distinctBy { it.videoUrl }
@@ -344,20 +370,33 @@ class Animasu :
 
                 // Filedon / Uservideo / Userdrive / Samevideo (Inertia R2 apps)
                 "filedon" in lowerUrl || "uservideo" in lowerUrl || "userdrive" in lowerUrl || "samevideo" in lowerUrl || "samehadaku" in lowerUrl -> {
+                    val embedUrl = if ("/view/" in url) url.replace("/view/", "/embed/") else url
                     val r2Headers = Headers.Builder()
                         .add("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
-                        .add("Referer", url)
+                        .add("Referer", embedUrl)
                         .add("Accept", "*/*")
                         .build()
-                    val doc = client.newCall(GET(url, r2Headers)).awaitSuccess().useAsJsoup()
+                    val doc = client.newCall(GET(embedUrl, r2Headers)).awaitSuccess().useAsJsoup()
                     val dataPage = doc.selectFirst("div#app")?.attr("data-page")
                     if (!dataPage.isNullOrBlank()) {
                         val json = JSONObject(dataPage)
                         val props = json.optJSONObject("props")
-                        val videoUrl = props?.optString("url")
-                        if (!videoUrl.isNullOrBlank()) {
-                            listOf(Video(videoUrl, if (name.isNotBlank()) name else "Filedon", headers = r2Headers))
-                        } else emptyList()
+                        val qualities = props?.optJSONArray("qualities")
+                        if (qualities != null && qualities.length() > 0) {
+                            (0 until qualities.length()).mapNotNull { i ->
+                                val qObj = qualities.optJSONObject(i) ?: return@mapNotNull null
+                                val qUrl = qObj.optString("url")
+                                val qLabel = qObj.optString("label", "Video")
+                                if (qUrl.isNotBlank() && qUrl.startsWith("http")) {
+                                    Video(qUrl, "${if (name.isNotBlank()) "$name - " else ""}Filedon ($qLabel)", headers = r2Headers)
+                                } else null
+                            }
+                        } else {
+                            val videoUrl = props?.optString("url")
+                            if (!videoUrl.isNullOrBlank() && videoUrl.startsWith("http")) {
+                                listOf(Video(videoUrl, if (name.isNotBlank()) name else "Filedon", headers = r2Headers))
+                            } else emptyList()
+                        }
                     } else {
                         val src = doc.selectFirst("video source, video")?.attr("src")
                         if (!src.isNullOrBlank()) {
@@ -367,13 +406,13 @@ class Animasu :
                 }
 
                 // VidHide
-                "vidhide" in lowerName || "vidhide" in lowerUrl || "streamhide" in lowerUrl -> {
+                "vidhide" in lowerName || "vidhide" in lowerUrl || "streamhide" in lowerUrl || "odvidhide" in lowerUrl || "vidlion" in lowerUrl -> {
                     VidHideExtractor(client, cleanHeaders).videosFromUrl(url)
                 }
 
                 // StreamWish / FileLions / WishFast / Medixiru / Niramirus
                 "streamwish" in lowerName || "streamwish" in lowerUrl || "filelions" in lowerUrl || "wishembed" in lowerUrl || "wishfast" in lowerUrl || "medixiru" in lowerUrl || "niramirus" in lowerUrl || "strwish" in lowerUrl || "dwish" in lowerUrl -> {
-                    StreamWishExtractor(client, cleanHeaders).videosFromUrl(url)
+                    StreamWishExtractor(client, cleanHeaders).videosFromUrl(url, videoNameGen = { if (name.isNotBlank()) "$name - $it" else it })
                 }
 
                 // Mp4Upload
@@ -408,10 +447,10 @@ class Animasu :
 
                 // Pixeldrain
                 "pixeldrain" in lowerName || "pixeldrain" in lowerUrl -> {
-                    val id = Regex("""/(?:u|file)/([a-zA-Z0-9]+)""").find(url)?.groupValues?.get(1)
+                    val id = Regex("""/(?:u|file|api/file)/([a-zA-Z0-9]+)""").find(url)?.groupValues?.get(1)
                     if (!id.isNullOrBlank()) {
                         val dlUrl = "https://pixeldrain.com/api/file/$id?download"
-                        listOf(Video(dlUrl, "${if (name.isNotBlank()) "$name - " else ""}PixelDrain", headers = cleanHeaders))
+                        listOf(Video(dlUrl, if (name.isNotBlank()) name else "PixelDrain", headers = cleanHeaders))
                     } else {
                         pixelDrainExtractor.videosFromUrl(url, prefix = if (name.isNotBlank()) "$name - " else "")
                     }
