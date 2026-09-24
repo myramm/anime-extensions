@@ -3,6 +3,7 @@ package eu.kanade.tachiyomi.animeextension.id.otakudesu
 import android.util.Base64
 import androidx.preference.ListPreference
 import androidx.preference.PreferenceScreen
+import aniyomi.lib.mp4uploadextractor.Mp4uploadExtractor
 import aniyomi.lib.streamwishextractor.StreamWishExtractor
 import aniyomi.lib.vidhideextractor.VidHideExtractor
 import aniyomi.lib.youruploadextractor.YourUploadExtractor
@@ -73,17 +74,17 @@ class OtakuDesu :
     // ============================== Episodes ==============================
     private val nameRegex by lazy { ".+?(?=Episode)|\\sSubtitle.+".toRegex() }
     override fun episodeFromElement(element: Element): SEpisode = SEpisode.create().apply {
-        val link = element.selectFirst("span > a")!!
+        val link = element.selectFirst("span > a, a")!!
         val text = link.text()
         episode_number = text.substringAfter("Episode ")
             .substringBefore(" ")
             .toFloatOrNull() ?: 1F
         setUrlWithoutDomain(link.attr("href"))
-        name = text.replace(nameRegex, "")
-        date_upload = element.selectFirst("span.zeebr")?.text().let(DATE_FORMATTER::tryParse)
+        name = text.replace(nameRegex, "").trim().ifEmpty { text }
+        date_upload = element.selectFirst("span.zeebr, span.date")?.text()?.let { DATE_FORMATTER.tryParse(it) } ?: 0L
     }
 
-    override fun episodeListSelector() = "#venkonten > div.venser > div:nth-child(8) > ul > li"
+    override fun episodeListSelector() = "div.episodelist ul li:has(a[href*='/episode/']), div.episodelist ul li, #venkonten > div.venser > div:nth-child(8) > ul > li"
 
     // =============================== Latest ===============================
     override fun latestUpdatesFromElement(element: Element): SAnime = SAnime.create().apply {
@@ -162,21 +163,23 @@ class OtakuDesu :
     }
 
     // ============================ Video Links =============================
-    override fun videoListSelector() = "div.mirrorstream ul li > a"
+    override fun videoListSelector() = "div.mirrorstream ul li > a, ul.m360p a, ul.m480p a, ul.m720p a"
 
     override fun videoListParse(response: Response): List<Video> {
         val doc = response.useAsJsoup()
-        val script = doc.selectFirst("script:containsData({action:)")!!
-            .data()
+        val script = doc.selectFirst("script:containsData(action:)")?.data().orEmpty()
 
-        val nonceAction = script.substringAfter("{action:\"").substringBefore('"')
-        val action = script.substringAfter("action:\"").substringBefore('"')
+        val actions = Regex("""action:\s*"([a-f0-9]+)"""").findAll(script).map { it.groupValues[1] }.toList()
+        if (actions.isEmpty()) return emptyList()
+
+        val streamAction = actions[0]
+        val nonceAction = if (actions.size >= 2) actions[1] else actions[0]
 
         val nonce = getNonce(nonceAction)
 
         return doc.select(videoListSelector())
             .parallelMapNotNullBlocking {
-                runCatching { getEmbedLinks(it, action, nonce) }.getOrNull()
+                runCatching { getEmbedLinks(it, streamAction, nonce) }.getOrNull()
             }
             .parallelCatchingFlatMapBlocking {
                 getVideosFromEmbed(it.first, it.second)
@@ -184,13 +187,13 @@ class OtakuDesu :
     }
 
     private suspend fun getEmbedLinks(element: Element, action: String, nonce: String): Pair<String, String> {
-        val decodedData = element.attr("data-content").b64Decode()
-            .drop(1)
-            .dropLast(1)
+        val contentAttr = element.attr("data-content")
+        if (contentAttr.isBlank()) return Pair("Default", "")
+        val decodedData = contentAttr.b64Decode()
 
-        val (id, mirror, quality) = decodedData.split(",").map {
-            it.substringAfter(":").replace("\"", "")
-        }
+        val id = decodedData.substringAfter("\"id\":").substringBefore(",").substringBefore("}").trim()
+        val mirror = decodedData.substringAfter("\"i\":").substringBefore(",").substringBefore("}").trim()
+        val quality = decodedData.substringAfter("\"q\":\"").substringBefore("\"").ifEmpty { "Default" }
 
         val form = FormBody.Builder().apply {
             add("id", id)
@@ -200,15 +203,15 @@ class OtakuDesu :
             add("action", action)
         }.build()
 
-        val doc = client.newCall(POST("$baseUrl/wp-admin/admin-ajax.php", body = form))
+        val resp = client.newCall(POST("$baseUrl/wp-admin/admin-ajax.php", body = form))
             .awaitSuccess()
             .bodyString()
-            .substringAfter(":\"")
-            .substringBefore('"')
-            .b64Decode()
-            .let(Jsoup::parse)
 
-        val url = doc.selectFirst("iframe")!!.attr("src")
+        val b64Html = resp.substringAfter("\"data\":\"").substringBefore("\"")
+        if (b64Html.isBlank()) return Pair(quality, "")
+
+        val doc = Jsoup.parse(b64Html.b64Decode())
+        val url = doc.selectFirst("iframe")?.attr("src").orEmpty()
 
         return Pair(quality, url)
     }
@@ -216,10 +219,11 @@ class OtakuDesu :
     private val filelionsExtractor by lazy { StreamWishExtractor(client, headers) }
     private val yourUploadExtractor by lazy { YourUploadExtractor(client) }
     private val vidHideExtractor by lazy { VidHideExtractor(client, headers) }
+    private val mp4uploadExtractor by lazy { Mp4uploadExtractor(client) }
 
     private suspend fun getVideosFromEmbed(quality: String, link: String): List<Video> = when {
-        "filelions" in link -> {
-            filelionsExtractor.videosFromUrl(link, videoNameGen = { "FileLions - $it" })
+        "filelions" in link || "filedon" in link || "streamwish" in link -> {
+            filelionsExtractor.videosFromUrl(link, videoNameGen = { "StreamWish - $it" })
         }
 
         "yourupload" in link -> {
@@ -231,25 +235,28 @@ class OtakuDesu :
         "desustream" in link -> {
             client.newCall(GET(link, headers)).awaitSuccess().let {
                 val doc = it.useAsJsoup()
-                val script = doc.selectFirst("script:containsData(sources)")!!.data()
+                val script = doc.selectFirst("script:containsData(sources)")?.data().orEmpty()
                 val videoUrl = script.substringAfter("sources:[{")
                     .substringAfter("file':'")
                     .substringBefore("'")
-                listOf(Video(videoUrl, "DesuStream - $quality", videoUrl, headers))
+                if (videoUrl.isNotBlank()) {
+                    listOf(Video(videoUrl, "DesuStream - $quality", videoUrl, headers))
+                } else {
+                    emptyList()
+                }
             }
         }
 
         "mp4upload" in link -> {
-            client.newCall(GET(link, headers)).awaitSuccess().let {
-                val doc = it.useAsJsoup()
-                val script = doc.selectFirst("script:containsData(player.src)")!!.data()
-                val videoUrl = script.substringAfter("src: \"").substringBefore('"')
-                listOf(Video(videoUrl, "Mp4upload - $quality", videoUrl, headers))
-            }
+            mp4uploadExtractor.videosFromUrl(link, headers)
         }
 
         "vidhide" in link -> {
             vidHideExtractor.videosFromUrl(link)
+        }
+
+        link.endsWith(".mp4") || link.endsWith(".m3u8") || link.contains(".mp4?") || link.contains(".m3u8?") -> {
+            listOf(Video(link, "Direct - $quality", link, headers))
         }
 
         else -> emptyList()

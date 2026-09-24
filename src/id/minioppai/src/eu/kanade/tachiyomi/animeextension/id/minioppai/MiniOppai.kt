@@ -50,7 +50,7 @@ class MiniOppai :
             }
         }
         element.selectFirst(".epl-sub")?.text()?.let { scanlator = it }
-        date_upload = element.selectFirst(".epl-date")?.text().let { dateFormatter.tryParse(it) }
+        date_upload = element.selectFirst(".epl-date")?.text().let { dateFormatter.tryParse(it) } ?: 0L
     }
 
     // ============================ Video Links =============================

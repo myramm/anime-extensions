@@ -115,7 +115,7 @@ class Animasu :
             num.isNotBlank() -> "Episode $num"
             else -> element.text()
         }
-        date_upload = element.selectFirst(".epl-date, .date")?.text()?.let { dateFormatter.tryParse(it) }
+        date_upload = element.selectFirst(".epl-date, .date")?.text()?.let { dateFormatter.tryParse(it) } ?: 0L
     }
 
     // ============================ Video Links =============================

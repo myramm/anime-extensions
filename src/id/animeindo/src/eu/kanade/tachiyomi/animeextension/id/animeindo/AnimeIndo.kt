@@ -111,7 +111,7 @@ class AnimeIndo :
         val num = ahref.text()
         name = "Episode $num"
         episode_number = num.trim().toFloatOrNull() ?: 0F
-        date_upload = element.selectFirst("span.date")?.text().let { dateFormatter.tryParse(it) }
+        date_upload = element.selectFirst("span.date")?.text().let { dateFormatter.tryParse(it) } ?: 0L
     }
 
     // ============================ Video Links =============================
