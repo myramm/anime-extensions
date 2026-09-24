@@ -271,7 +271,7 @@ class Animasu :
         val videos: List<Video> = serverList.distinctBy { it.first }.parallelCatchingFlatMapBlocking { server ->
             getVideoList(server.first, server.second)
         }
-        return videos.distinctBy { it.videoUrl ?: it.url }
+        return videos.distinctBy { it.videoUrl }
     }
 
     override suspend fun getHosterUrl(element: Element): String {
@@ -356,12 +356,12 @@ class Animasu :
                         val props = json.optJSONObject("props")
                         val videoUrl = props?.optString("url")
                         if (!videoUrl.isNullOrBlank()) {
-                            listOf(Video(videoUrl, if (name.isNotBlank()) name else "Filedon", videoUrl, r2Headers))
+                            listOf(Video(videoUrl, if (name.isNotBlank()) name else "Filedon", headers = r2Headers))
                         } else emptyList()
                     } else {
                         val src = doc.selectFirst("video source, video")?.attr("src")
                         if (!src.isNullOrBlank()) {
-                            listOf(Video(videoUrl = src, quality = if (name.isNotBlank()) name else "Filedon", videoUrl = src, headers = r2Headers))
+                            listOf(Video(src, if (name.isNotBlank()) name else "Filedon", headers = r2Headers))
                         } else emptyList()
                     }
                 }
@@ -411,7 +411,7 @@ class Animasu :
                     val id = Regex("""/(?:u|file)/([a-zA-Z0-9]+)""").find(url)?.groupValues?.get(1)
                     if (!id.isNullOrBlank()) {
                         val dlUrl = "https://pixeldrain.com/api/file/$id?download"
-                        listOf(Video(dlUrl, "${if (name.isNotBlank()) "$name - " else ""}PixelDrain", dlUrl, cleanHeaders))
+                        listOf(Video(dlUrl, "${if (name.isNotBlank()) "$name - " else ""}PixelDrain", headers = cleanHeaders))
                     } else {
                         pixelDrainExtractor.videosFromUrl(url, prefix = if (name.isNotBlank()) "$name - " else "")
                     }
@@ -437,7 +437,7 @@ class Animasu :
                         .add("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
                         .add("Accept", "*/*")
                         .build()
-                    listOf(Video(url, if (name.isNotBlank()) name else "Direct", url, streamHeaders))
+                    listOf(Video(url, if (name.isNotBlank()) name else "Direct", headers = streamHeaders))
                 }
 
                 // Internal wrapper or generic iframe page
@@ -454,7 +454,7 @@ class Animasu :
                     } else {
                         val videoSrc = doc?.selectFirst("video source, video")?.attr("src")
                         if (!videoSrc.isNullOrBlank()) {
-                            listOf(Video(videoSrc, if (name.isNotBlank()) name else "Video", videoSrc, reqHeaders))
+                            listOf(Video(videoSrc, if (name.isNotBlank()) name else "Video", headers = reqHeaders))
                         } else {
                             Log.i("Animasu", "Unrecognized server at getVideoList => Name -> $name || URL => $url")
                             emptyList()

@@ -212,7 +212,7 @@ class OtakuDesu : ParsedAnimeHttpLegacySource() {
         }
 
         val allVideos = ajaxVideos + iframeVideos + downloadVideos
-        return allVideos.distinctBy { it.videoUrl ?: it.quality }
+        return allVideos.distinctBy { it.videoUrl }
     }
 
     private fun String.b64Decode(): String = try {
@@ -283,12 +283,12 @@ class OtakuDesu : ParsedAnimeHttpLegacySource() {
                         val props = json.optJSONObject("props")
                         val videoUrl = props?.optString("url")
                         if (!videoUrl.isNullOrBlank()) {
-                            listOf(Video(videoUrl, server, videoUrl, r2Headers))
+                            listOf(Video(videoUrl, server, headers = r2Headers))
                         } else emptyList()
                     } else {
                         val src = doc.selectFirst("video source, video")?.attr("src")
                         if (!src.isNullOrBlank()) {
-                            listOf(Video(videoUrl = src, quality = server, videoUrl = src, headers = r2Headers))
+                            listOf(Video(src, server, headers = r2Headers))
                         } else emptyList()
                     }
                 }
@@ -340,7 +340,7 @@ class OtakuDesu : ParsedAnimeHttpLegacySource() {
                     val id = Regex("""/(?:u|file)/([a-zA-Z0-9]+)""").find(link)?.groupValues?.get(1)
                     if (!id.isNullOrBlank()) {
                         val dlUrl = "https://pixeldrain.com/api/file/$id?download"
-                        listOf(Video(dlUrl, "$server (PixelDrain)", dlUrl, cleanHeaders))
+                        listOf(Video(dlUrl, "$server (PixelDrain)", headers = cleanHeaders))
                     } else emptyList()
                 }
 
@@ -354,10 +354,10 @@ class OtakuDesu : ParsedAnimeHttpLegacySource() {
                             .substringBefore("'")
                         if (videoUrl.isNotBlank() && (videoUrl.startsWith("http") || videoUrl.startsWith("//"))) {
                             val fixedUrl = if (videoUrl.startsWith("//")) "https:$videoUrl" else videoUrl
-                            listOf(Video(fixedUrl, server, fixedUrl, videoHeaders))
+                            listOf(Video(fixedUrl, server, headers = videoHeaders))
                         } else {
                             doc.selectFirst("video source")?.attr("src")?.takeIf(String::isNotBlank)?.let {
-                                listOf(Video(it, server, it, videoHeaders))
+                                listOf(Video(it, server, headers = videoHeaders))
                             }.orEmpty()
                         }
                     }.getOrDefault(emptyList())
@@ -368,7 +368,7 @@ class OtakuDesu : ParsedAnimeHttpLegacySource() {
                         .add("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
                         .add("Accept", "*/*")
                         .build()
-                    listOf(Video(link, server, link, streamHeaders))
+                    listOf(Video(link, server, headers = streamHeaders))
                 }
 
                 else -> emptyList()

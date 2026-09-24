@@ -175,8 +175,8 @@ class Samehadaku :
             .parallelMapNotNullBlocking {
                 runCatching { getEmbedLinks(url, it) }.getOrNull()
             }
-            .parallelCatchingFlatMapBlocking {
-                getVideosFromEmbed(it.first, it.second)
+            .parallelCatchingFlatMapBlocking { server ->
+                getVideosFromEmbed(server.first, server.second)
             }
 
         val downloadElements = doc.select("div.download ul li, div.download-eps ul li")
@@ -190,12 +190,12 @@ class Samehadaku :
                     Pair(name, href)
                 } else null
             }
-        }.parallelCatchingFlatMapBlocking {
-            getVideosFromEmbed(it.first, it.second)
+        }.parallelCatchingFlatMapBlocking { server ->
+            getVideosFromEmbed(server.first, server.second)
         }
 
         val allVideos = ajaxVideos + downloadVideos
-        return allVideos.distinctBy { it.videoUrl ?: it.url }
+        return allVideos.distinctBy { it.videoUrl }
     }
 
     // ============================= Utilities ==============================
@@ -286,7 +286,7 @@ class Samehadaku :
                     val json = JSONObject(dataPage)
                     val props = json.getJSONObject("props")
                     val videoUrl = props.getString("url")
-                    listOf(Video(videoUrl, server, videoUrl, r2Headers))
+                    listOf(Video(videoUrl, server, headers = r2Headers))
                 }
 
                 // Blogger video
@@ -336,7 +336,7 @@ class Samehadaku :
                     val id = Regex("""/(?:u|file)/([a-zA-Z0-9]+)""").find(link)?.groupValues?.get(1)
                     if (!id.isNullOrBlank()) {
                         val dlUrl = "https://pixeldrain.com/api/file/$id?download"
-                        listOf(Video(dlUrl, "$server (PixelDrain)", dlUrl, cleanHeaders))
+                        listOf(Video(dlUrl, "$server (PixelDrain)", headers = cleanHeaders))
                     } else emptyList()
                 }
 
@@ -345,7 +345,7 @@ class Samehadaku :
                     val doc = client.newCall(GET(link, videoHeaders)).awaitSuccess().useAsJsoup()
                     val getUrl = doc.selectFirst("source")?.attr("src") ?: return emptyList()
                     val videoUrl = UrlUtils.fixUrl(getUrl)?.replace("&amp;", "&") ?: return emptyList()
-                    listOf(Video(videoUrl, server, videoUrl, videoHeaders))
+                    listOf(Video(videoUrl, server, headers = videoHeaders))
                 }
 
                 link.contains(".mp4") || link.contains(".webm") || link.contains(".m3u8") -> {
@@ -353,14 +353,14 @@ class Samehadaku :
                         .add("User-Agent", USER_AGENT)
                         .add("Accept", "*/*")
                         .build()
-                    listOf(Video(link, server, link, streamHeaders))
+                    listOf(Video(link, server, headers = streamHeaders))
                 }
 
                 else -> {
                     val doc = client.newCall(GET(link, videoHeaders)).awaitSuccess().useAsJsoup()
                     val videoUrl = doc.selectFirst("video source, video")?.attr("src") ?: return emptyList()
                     val finalUrl = UrlUtils.fixUrl(videoUrl) ?: return emptyList()
-                    listOf(Video(finalUrl, server, finalUrl, videoHeaders))
+                    listOf(Video(finalUrl, server, headers = videoHeaders))
                 }
             }
         }.getOrDefault(emptyList())
