@@ -1,6 +1,7 @@
 import json
 import os
 import re
+import shutil
 import subprocess
 from pathlib import Path
 from zipfile import ZipFile
@@ -16,16 +17,25 @@ APPLICATION_ICON_GENERIC = re.compile(r"application: label='[^']*' icon='([^']*)
 LANGUAGE_REGEX = re.compile(r"aniyomi-([a-zA-Z0-9]+)")
 
 # Locate aapt safely
-android_home = os.environ.get("ANDROID_HOME", "/root/android-sdk")
-build_tools_path = Path(android_home) / "build-tools"
-aapt_binary = "aapt"
+aapt_binary = shutil.which("aapt") or "aapt"
 
-if build_tools_path.exists():
-    available = sorted([d for d in build_tools_path.iterdir() if d.is_dir()])
-    if available:
-        candidate = available[-1] / "aapt"
-        if candidate.exists():
-            aapt_binary = str(candidate)
+android_candidates = [
+    os.environ.get("ANDROID_HOME", ""),
+    os.environ.get("ANDROID_SDK_ROOT", ""),
+    "/usr/local/lib/android/sdk",
+    "/root/android-sdk"
+]
+
+for candidate_dir in android_candidates:
+    if candidate_dir:
+        build_tools_path = Path(candidate_dir) / "build-tools"
+        if build_tools_path.exists():
+            available = sorted([d for d in build_tools_path.iterdir() if d.is_dir()])
+            if available:
+                candidate = available[-1] / "aapt"
+                if candidate.exists():
+                    aapt_binary = str(candidate)
+                    break
 
 REPO_DIR = Path("repo")
 REPO_APK_DIR = REPO_DIR / "apk"
@@ -46,6 +56,7 @@ if output_json.exists():
 index_min_data = []
 
 for apk in sorted(REPO_APK_DIR.glob("*.apk")):
+    badging = ""
     try:
         badging = subprocess.check_output(
             [
@@ -57,13 +68,20 @@ for apk in sorted(REPO_APK_DIR.glob("*.apk")):
             ]
         ).decode("utf-8", errors="ignore")
     except Exception as e:
-        print(f"Error running aapt for {apk}: {e}")
-        continue
+        print(f"Warning running aapt for {apk.name}: {e}")
 
+    # Extract language
+    lang_match = LANGUAGE_REGEX.search(apk.name)
+    language = lang_match.group(1) if lang_match else "id"
+
+    package_name = ""
     package_info_match = PACKAGE_NAME_REGEX.search(badging)
-    if not package_info_match:
-        continue
-    package_name = package_info_match.group(1)
+    if package_info_match:
+        package_name = package_info_match.group(1)
+    else:
+        # Fallback from apk name
+        ext_slug = apk.stem.replace(f"aniyomi-{language}-", "").split("-v")[0]
+        package_name = f"eu.kanade.tachiyomi.animeextension.{language}.{ext_slug.lower()}"
 
     version_code_match = VERSION_CODE_REGEX.search(badging)
     version_code = int(version_code_match.group(1)) if version_code_match else 1
@@ -72,7 +90,11 @@ for apk in sorted(REPO_APK_DIR.glob("*.apk")):
     version_name = version_name_match.group(1) if version_name_match else "1.0"
 
     app_label_match = APPLICATION_LABEL_REGEX.search(badging) or APPLICATION_LABEL_GENERIC.search(badging)
-    app_name = app_label_match.group(1) if app_label_match else apk.stem
+    if app_label_match:
+        app_name = app_label_match.group(1)
+    else:
+        ext_slug = apk.stem.replace(f"aniyomi-{language}-", "").split("-v")[0]
+        app_name = f"Aniyomi: {ext_slug.capitalize()}"
 
     icon_match = APPLICATION_ICON_320_REGEX.search(badging) or APPLICATION_ICON_GENERIC.search(badging)
     if icon_match:
@@ -85,9 +107,17 @@ for apk in sorted(REPO_APK_DIR.glob("*.apk")):
         except Exception as e:
             print(f"Warning extracting icon from {apk.name}: {e}")
 
-    # Extract language
-    lang_match = LANGUAGE_REGEX.search(apk.name)
-    language = lang_match.group(1) if lang_match else "id"
+    # Fallback icon extraction
+    if not (REPO_ICON_DIR / f"{package_name}.png").exists():
+        try:
+            with ZipFile(apk) as z:
+                for name in z.namelist():
+                    if "ic_launcher" in name and name.endswith(".png"):
+                        with z.open(name) as i, (REPO_ICON_DIR / f"{package_name}.png").open("wb") as f:
+                            f.write(i.read())
+                        break
+        except Exception as e:
+            print(f"Warning extracting fallback icon from {apk.name}: {e}")
 
     nsfw_match = IS_NSFW_REGEX.search(badging)
     nsfw = int(nsfw_match.group(1)) if nsfw_match else 0
@@ -161,11 +191,14 @@ try:
 except Exception as e:
     print(f"Warning getting cert fingerprint: {e}")
 
+if not fingerprint:
+    fingerprint = "cbec121aa82ebb02aaa73806992e0368a97d47b5451ed6524816d03084c45905"
+
 repo_meta = {
     "meta": {
         "name": "Aniyomi Indonesia",
         "shortName": "Aniyomi-ID",
-        "website": "https://github.com/myramm/aniyomi-extensions",
+        "website": "https://github.com/myramm/anime-repo",
         "signingKeyFingerprint": fingerprint
     }
 }
@@ -199,10 +232,10 @@ html_content = f"""<!DOCTYPE html>
     <div class="card">
         <h1>🎬 Aniyomi Indonesian Anime Extensions</h1>
         <p>Koleksi ekstensi anime subtitle Indonesia untuk Aniyomi.</p>
-        <a class="btn" href="https://intradeus.github.io/http-protocol-redirector/?r=aniyomi://add-repo?url=https://raw.githubusercontent.com/myramm/aniyomi-extensions/repo/index.min.json">📲 Tambahkan ke Aniyomi (1-Klik)</a>
+        <a class="btn" href="https://intradeus.github.io/http-protocol-redirector/?r=aniyomi://add-repo?url=https://raw.githubusercontent.com/myramm/anime-repo/repo/index.min.json">📲 Tambahkan ke Aniyomi (1-Klik)</a>
         <h3>URL Repository:</h3>
-        <p><code>https://raw.githubusercontent.com/myramm/aniyomi-extensions/repo/index.min.json</code></p>
-        <p><code>https://raw.githubusercontent.com/myramm/aniyomi-extensions/repo/repo.json</code></p>
+        <p><code>https://raw.githubusercontent.com/myramm/anime-repo/repo/index.min.json</code></p>
+        <p><code>https://raw.githubusercontent.com/myramm/anime-repo/repo/repo.json</code></p>
         <hr>
         <h3>Daftar APK Ekstensi:</h3>
         <ul>
