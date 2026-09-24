@@ -174,9 +174,11 @@ class OtakuDesu : ParsedAnimeHttpLegacySource() {
 
     override fun videoListParse(response: Response): List<Video> {
         val doc = response.useAsJsoup()
-        val script = doc.selectFirst("script:containsData(action:)")?.data().orEmpty()
+        val script = doc.select("script").map { it.data() }.firstOrNull { "mirrorstream" in it && "action:" in it }
+            ?: doc.select("script").map { it.data() }.firstOrNull { "action:" in it && Regex("""action:\s*["'][a-f0-9]{20,}["']""").containsMatchIn(it) }
+            ?: ""
 
-        val actions = Regex("""action:\s*["']([a-f0-9]+)["']""").findAll(script).map { it.groupValues[1] }.toList()
+        val actions = Regex("""action:\s*["']([a-f0-9]{20,})["']""").findAll(script).map { it.groupValues[1] }.toList()
         val ajaxVideos = if (actions.isNotEmpty()) {
             val streamAction = actions[0]
             val nonceAction = if (actions.size >= 2) actions[1] else actions[0]
@@ -343,7 +345,7 @@ class OtakuDesu : ParsedAnimeHttpLegacySource() {
                 }
 
                 // VidHide
-                "vidhide" in link || "odvidhide" in link || "streamhide" in link -> {
+                "vidhide" in link || "odvidhide" in link || "streamhide" in link || "vidlion" in link -> {
                     VidHideExtractor(client, cleanHeaders).videosFromUrl(link)
                 }
 
@@ -394,9 +396,9 @@ class OtakuDesu : ParsedAnimeHttpLegacySource() {
                             val fixedUrl = if (videoSrc.startsWith("//")) "https:$videoSrc" else videoSrc
                             listOf(Video(fixedUrl, server, headers = videoHeaders))
                         } else {
-                            val script = doc.selectFirst("script:containsData(sources), script:containsData(file)")?.data().orEmpty()
-                            val videoUrl = script.substringAfter("file':'", "")
-                                .ifEmpty { script.substringAfter("file:\"", "") }
+                            val scriptData = doc.selectFirst("script:containsData(sources), script:containsData(file)")?.data().orEmpty()
+                            val videoUrl = scriptData.substringAfter("file':'", "")
+                                .ifEmpty { scriptData.substringAfter("file:\"", "") }
                                 .substringBefore("'")
                                 .substringBefore("\"")
                             if (videoUrl.isNotBlank() && (videoUrl.startsWith("http") || videoUrl.startsWith("//"))) {
