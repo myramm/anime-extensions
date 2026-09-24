@@ -45,6 +45,7 @@ class Kuronime :
         anime.status = status
         anime.artist = infodetail.select("ul > li:nth-child(4)").text().replace("Studio: ", "")
         anime.author = "UNKNOWN"
+        anime.thumbnail_url = document.selectFirst("div.infodetail img, div.con img, div.thumb img, div.limage img, .thumb")?.getImageUrl()
         anime.description = "Synopsis: \n" + document.select("div.main-info > div.con > div.r > div > span > p").text()
         return anime
     }
@@ -76,16 +77,13 @@ class Kuronime :
 
     private fun getAnimeFromAnimeElement(element: Element): SAnime {
         val anime = SAnime.create()
-        anime.setUrlWithoutDomain(element.selectFirst("div > a")!!.attr("href"))
-
-        val thumbnailElement = element.selectFirst("div > a > div.limit > img")!!
-        val thumbnail = thumbnailElement.attr("src")
-        anime.thumbnail_url = if (thumbnail.startsWith("https:")) {
-            thumbnail
-        } else {
-            if (thumbnailElement.hasAttr("data-src")) thumbnailElement.attr("data-src") else ""
+        val link = element.selectFirst("div > a, a")
+        if (link != null) {
+            anime.setUrlWithoutDomain(link.attr("href"))
         }
-        anime.title = element.select("div > a > div.tt > h4").text()
+
+        anime.thumbnail_url = element.getImageUrl()
+        anime.title = element.select("div > a > div.tt > h4, div.tt h4, h4, h2").text().trim()
         return anime
     }
     override fun latestUpdatesNextPageSelector(): String = "div.pagination > a.next"
@@ -214,4 +212,45 @@ class Kuronime :
         screen.addPreference(hostSelection)
         screen.addPreference(videoQualityPref)
     }
+
+    private fun Element.getImageUrl(): String? {
+        val img = if (tagName().lowercase() == "img") this else selectFirst("img")
+        val candidate = if (img != null) {
+            val attrList = listOf(
+                "data-src",
+                "data-lazy-src",
+                "data-original",
+                "data-cfsrc",
+                "data-srcset",
+                "srcset",
+                "src",
+            )
+            var found: String? = null
+            for (attr in attrList) {
+                val v = if (img.hasAttr(attr)) img.attr("abs:$attr").ifBlank { img.attr(attr) } else ""
+                val clean = if (attr.contains("srcset")) v.substringBefore(" ").substringBefore(",") else v
+                if (clean.isNotBlank() && !clean.startsWith("data:image", ignoreCase = true)) {
+                    found = clean.trim()
+                    break
+                }
+            }
+            found
+        } else {
+            val style = attr("style")
+            if ("url(" in style) {
+                Regex("""url\(['"]?([^'"]+)['"]?\)""").find(style)?.groupValues?.get(1)
+            } else null
+        }
+
+        if (candidate.isNullOrBlank() || candidate.startsWith("data:image", ignoreCase = true)) return null
+
+        val url = when {
+            candidate.startsWith("//") -> "https:$candidate"
+            candidate.startsWith("/") -> "$baseUrl$candidate"
+            else -> candidate
+        }
+
+        return url.substringBefore("?resize")
+    }
 }
+

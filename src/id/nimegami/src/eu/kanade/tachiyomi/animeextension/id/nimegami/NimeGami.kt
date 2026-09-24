@@ -41,8 +41,8 @@ class NimeGami : ParsedAnimeHttpLegacySource() {
 
     override fun popularAnimeFromElement(element: Element) = SAnime.create().apply {
         setUrlWithoutDomain(element.attr("href"))
-        thumbnail_url = element.selectFirst("img")!!.attr("data-lazy-src")
-        title = element.selectFirst("div.title-post2")!!.text()
+        thumbnail_url = element.getImageUrl()
+        title = element.selectFirst("div.title-post2")?.text() ?: element.text().trim()
     }
 
     override fun popularAnimeNextPageSelector() = null
@@ -53,11 +53,11 @@ class NimeGami : ParsedAnimeHttpLegacySource() {
     override fun latestUpdatesSelector() = "div.post article"
 
     override fun latestUpdatesFromElement(element: Element) = SAnime.create().apply {
-        element.selectFirst("h2 > a")!!.let {
+        element.selectFirst("h2 > a, a")?.let {
             setUrlWithoutDomain(it.attr("href"))
-            title = it.text()
+            title = it.text().trim()
         }
-        thumbnail_url = element.selectFirst("img")!!.attr("srcset").substringBefore(" ")
+        thumbnail_url = element.getImageUrl()
     }
 
     override fun latestUpdatesNextPageSelector() = "ul.pagination > li > a:contains(Next)"
@@ -105,12 +105,13 @@ class NimeGami : ParsedAnimeHttpLegacySource() {
     // =========================== Anime Details ============================
     override fun animeDetailsParse(document: Document) = SAnime.create().apply {
         setUrlWithoutDomain(document.location())
-        thumbnail_url = document.selectFirst("div.coverthumbnail img")!!.attr("src")
-        val infosDiv = document.selectFirst("div.info2 > table > tbody")!!
-        title = infosDiv.getInfo("Judul:")
-            ?: document.selectFirst("h2[itemprop=name]")!!.text()
-        genre = infosDiv.getInfo("Kategori")
-        artist = infosDiv.getInfo("Studio")
+        thumbnail_url = document.selectFirst("div.coverthumbnail img, div.thumb img, .coverthumbnail, div.limage img, .thumb")?.getImageUrl()
+        val infosDiv = document.selectFirst("div.info2 > table > tbody")
+        title = infosDiv?.getInfo("Judul:")
+            ?: document.selectFirst("h2[itemprop=name], h1.title, h1")?.text()
+            ?: "Anime"
+        genre = infosDiv?.getInfo("Kategori")
+        artist = infosDiv?.getInfo("Studio")
         status = with(document.selectFirst("h1.title")?.text().orEmpty()) {
             when {
                 contains("(On-Going)") -> SAnime.ONGOING
@@ -125,10 +126,10 @@ class NimeGami : ParsedAnimeHttpLegacySource() {
             }
 
             val nonNeeded = listOf("Judul:", "Kategori", "Studio")
-            infosDiv.select("tr")
-                .eachText()
-                .filterNot(nonNeeded::contains)
-                .forEach { append("\n$it") }
+            infosDiv?.select("tr")
+                ?.eachText()
+                ?.filterNot(nonNeeded::contains)
+                ?.forEach { append("\n$it") }
         }
     }
 
@@ -257,7 +258,48 @@ class NimeGami : ParsedAnimeHttpLegacySource() {
     // ============================= Utilities ==============================
     private fun String.b64Decode() = String(Base64.decode(this, Base64.DEFAULT))
 
+    private fun Element.getImageUrl(): String? {
+        val img = if (tagName().lowercase() == "img") this else selectFirst("img")
+        val candidate = if (img != null) {
+            val attrList = listOf(
+                "data-src",
+                "data-lazy-src",
+                "data-original",
+                "data-cfsrc",
+                "data-srcset",
+                "srcset",
+                "src",
+            )
+            var found: String? = null
+            for (attr in attrList) {
+                val v = if (img.hasAttr(attr)) img.attr("abs:$attr").ifBlank { img.attr(attr) } else ""
+                val clean = if (attr.contains("srcset")) v.substringBefore(" ").substringBefore(",") else v
+                if (clean.isNotBlank() && !clean.startsWith("data:image", ignoreCase = true)) {
+                    found = clean.trim()
+                    break
+                }
+            }
+            found
+        } else {
+            val style = attr("style")
+            if ("url(" in style) {
+                Regex("""url\(['"]?([^'"]+)['"]?\)""").find(style)?.groupValues?.get(1)
+            } else null
+        }
+
+        if (candidate.isNullOrBlank() || candidate.startsWith("data:image", ignoreCase = true)) return null
+
+        val url = when {
+            candidate.startsWith("//") -> "https:$candidate"
+            candidate.startsWith("/") -> "$baseUrl$candidate"
+            else -> candidate
+        }
+
+        return url.substringBefore("?resize")
+    }
+
     companion object {
         const val PREFIX_SEARCH = "id:"
     }
 }
+

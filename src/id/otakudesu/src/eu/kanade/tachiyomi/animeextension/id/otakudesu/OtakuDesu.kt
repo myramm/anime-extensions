@@ -64,8 +64,8 @@ class OtakuDesu : ParsedAnimeHttpLegacySource() {
     override fun latestUpdatesFromElement(element: Element): SAnime = SAnime.create().apply {
         val link = element.selectFirst("div.thumb a, a") ?: return@apply
         setUrlWithoutDomain(link.attr("href"))
-        title = element.selectFirst("div.thumb a div.thumbz h2, h2")?.text().orEmpty()
-        thumbnail_url = element.selectFirst("div.thumb a div.thumbz img, img")?.attr("src")
+        title = element.selectFirst("div.thumb a div.thumbz h2, h2, a")?.text().orEmpty()
+        thumbnail_url = element.getImageUrl()
     }
 
     override fun latestUpdatesNextPageSelector(): String? = "div.pagination a.next"
@@ -92,7 +92,7 @@ class OtakuDesu : ParsedAnimeHttpLegacySource() {
             if (produser.isNotBlank()) append("Produser: $produser\n")
         }.trim()
 
-        thumbnail_url = document.selectFirst("div.fotoanime img")?.attr("src")
+        thumbnail_url = document.selectFirst("div.fotoanime img, div.thumb img, .fotoanime")?.getImageUrl()
         initialized = true
     }
 
@@ -162,8 +162,7 @@ class OtakuDesu : ParsedAnimeHttpLegacySource() {
         setUrlWithoutDomain(link.attr("href"))
         title = link.text().trim()
 
-        val img = element.selectFirst("img, div.col-anime-cover img")
-        thumbnail_url = img?.attr("src")
+        thumbnail_url = element.getImageUrl()
     }
 
     override fun searchAnimeNextPageSelector(): String? = "div.pagination a.next"
@@ -492,4 +491,45 @@ class OtakuDesu : ParsedAnimeHttpLegacySource() {
     ) {
         fun toUriPart() = vals[state].second
     }
+
+    private fun Element.getImageUrl(): String? {
+        val img = if (tagName().lowercase() == "img") this else selectFirst("img")
+        val candidate = if (img != null) {
+            val attrList = listOf(
+                "data-src",
+                "data-lazy-src",
+                "data-original",
+                "data-cfsrc",
+                "data-srcset",
+                "srcset",
+                "src",
+            )
+            var found: String? = null
+            for (attr in attrList) {
+                val v = if (img.hasAttr(attr)) img.attr("abs:$attr").ifBlank { img.attr(attr) } else ""
+                val clean = if (attr.contains("srcset")) v.substringBefore(" ").substringBefore(",") else v
+                if (clean.isNotBlank() && !clean.startsWith("data:image", ignoreCase = true)) {
+                    found = clean.trim()
+                    break
+                }
+            }
+            found
+        } else {
+            val style = attr("style")
+            if ("url(" in style) {
+                Regex("""url\(['"]?([^'"]+)['"]?\)""").find(style)?.groupValues?.get(1)
+            } else null
+        }
+
+        if (candidate.isNullOrBlank() || candidate.startsWith("data:image", ignoreCase = true)) return null
+
+        val url = when {
+            candidate.startsWith("//") -> "https:$candidate"
+            candidate.startsWith("/") -> "$baseUrl$candidate"
+            else -> candidate
+        }
+
+        return url.substringBefore("?resize")
+    }
 }
+

@@ -72,7 +72,7 @@ class Samehadaku :
             SAnime.create().apply {
                 it.selectFirst("a")?.attr("href")?.let { url -> setUrlWithoutDomain(url) } ?: return@mapNotNull null
                 title = it.selectFirst(".judul")?.text() ?: return@mapNotNull null
-                thumbnail_url = it.selectFirst("img")?.attr("src")
+                thumbnail_url = it.getImageUrl()
             }
         }
     }
@@ -132,11 +132,7 @@ class Samehadaku :
                 )
                 ?.trim()?.let { title = it }
 
-            (
-                doc.selectFirst("div.infoanime.widget_senction > div.thumb > img")?.attr("src")
-                    ?: doc.selectFirst("div.episodeinf > div.infoanime > div.areainfo > div.thumb > img")?.attr("src")
-                )
-                .let { thumbnail_url = it }
+            thumbnail_url = doc.selectFirst("div.infoanime.widget_senction > div.thumb > img, div.episodeinf > div.infoanime > div.areainfo > div.thumb > img, div.thumb img, div.limage img, .thumb")?.getImageUrl()
 
             (
                 doc.selectFirst("div.entry-content.entry-content-single > p")?.text()
@@ -231,9 +227,9 @@ class Samehadaku :
     private fun getAnimeParse(document: Document, query: String): AnimesPage {
         val animes = document.select(query).mapNotNull { elm ->
             SAnime.create().apply {
-                elm.selectFirst("div > a")?.attr("href")?.let { setUrlWithoutDomain(it) } ?: return@mapNotNull null
-                title = elm.selectFirst("div.title > h2")?.text() ?: return@mapNotNull null
-                elm.selectFirst("div.content-thumb > img")?.attr("src")?.let { thumbnail_url = it }
+                elm.selectFirst("div > a, a")?.attr("href")?.let { setUrlWithoutDomain(it) } ?: return@mapNotNull null
+                title = elm.selectFirst("div.title > h2, h2, .title, .judul")?.text() ?: return@mapNotNull null
+                thumbnail_url = elm.getImageUrl()
             }
         }
         val hasNextPage = try {
@@ -448,4 +444,45 @@ class Samehadaku :
 
         private val srcRegex by lazy { Regex("""src\s*=\s*["']([^"']+)["']""") }
     }
+
+    private fun Element.getImageUrl(): String? {
+        val img = if (tagName().lowercase() == "img") this else selectFirst("img")
+        val candidate = if (img != null) {
+            val attrList = listOf(
+                "data-src",
+                "data-lazy-src",
+                "data-original",
+                "data-cfsrc",
+                "data-srcset",
+                "srcset",
+                "src",
+            )
+            var found: String? = null
+            for (attr in attrList) {
+                val v = if (img.hasAttr(attr)) img.attr("abs:$attr").ifBlank { img.attr(attr) } else ""
+                val clean = if (attr.contains("srcset")) v.substringBefore(" ").substringBefore(",") else v
+                if (clean.isNotBlank() && !clean.startsWith("data:image", ignoreCase = true)) {
+                    found = clean.trim()
+                    break
+                }
+            }
+            found
+        } else {
+            val style = attr("style")
+            if ("url(" in style) {
+                Regex("""url\(['"]?([^'"]+)['"]?\)""").find(style)?.groupValues?.get(1)
+            } else null
+        }
+
+        if (candidate.isNullOrBlank() || candidate.startsWith("data:image", ignoreCase = true)) return null
+
+        val url = when {
+            candidate.startsWith("//") -> "https:$candidate"
+            candidate.startsWith("/") -> "$baseUrl$candidate"
+            else -> candidate
+        }
+
+        return url.substringBefore("?resize")
+    }
 }
+
