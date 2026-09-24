@@ -1,5 +1,6 @@
 package eu.kanade.tachiyomi.animeextension.id.otakudesu
 
+import android.util.Base64
 import aniyomi.lib.bloggerextractor.BloggerExtractor
 import aniyomi.lib.mp4uploadextractor.Mp4uploadExtractor
 import aniyomi.lib.streamwishextractor.StreamWishExtractor
@@ -14,8 +15,7 @@ import eu.kanade.tachiyomi.animesource.model.Video
 import eu.kanade.tachiyomi.network.GET
 import eu.kanade.tachiyomi.network.POST
 import eu.kanade.tachiyomi.network.awaitSuccess
-import keiyoushi.utils.AnimeHttpLegacySource
-import keiyoushi.utils.b64Decode
+import keiyoushi.utils.ParsedAnimeHttpLegacySource
 import keiyoushi.utils.bodyString
 import keiyoushi.utils.parallelCatchingFlatMapBlocking
 import keiyoushi.utils.parallelMapNotNullBlocking
@@ -32,7 +32,7 @@ import org.jsoup.nodes.Element
 import java.text.SimpleDateFormat
 import java.util.Locale
 
-class OtakuDesu : AnimeHttpLegacySource() {
+class OtakuDesu : ParsedAnimeHttpLegacySource() {
     override val name: String = "OtakuDesu"
 
     override val baseUrl: String = "https://otakudesu.cloud"
@@ -49,20 +49,14 @@ class OtakuDesu : AnimeHttpLegacySource() {
     // ============================== Popular ===============================
     override fun popularAnimeRequest(page: Int): Request = GET("$baseUrl/complete-anime/page/$page", headers)
 
-    override fun popularAnimeParse(response: Response): AnimesPage = latestUpdatesParse(response)
+    override fun popularAnimeSelector(): String = latestUpdatesSelector()
+
+    override fun popularAnimeFromElement(element: Element): SAnime = latestUpdatesFromElement(element)
+
+    override fun popularAnimeNextPageSelector(): String? = latestUpdatesNextPageSelector()
 
     // =============================== Latest ===============================
     override fun latestUpdatesRequest(page: Int): Request = GET("$baseUrl/ongoing-anime/page/$page", headers)
-
-    override fun latestUpdatesParse(response: Response): AnimesPage {
-        val document = response.useAsJsoup()
-
-        val animes = document.select(latestUpdatesSelector()).map(::latestUpdatesFromElement)
-
-        val hasNextPage = document.selectFirst(latestUpdatesNextPageSelector()) != null
-
-        return AnimesPage(animes, hasNextPage)
-    }
 
     override fun latestUpdatesSelector(): String = "div.venomblist ul li div.detpost"
 
@@ -72,11 +66,9 @@ class OtakuDesu : AnimeHttpLegacySource() {
         thumbnail_url = element.selectFirst("div.thumb a div.thumbz img")!!.attr("src")
     }
 
-    override fun latestUpdatesNextPageSelector(): String = "div.pagination a.next"
+    override fun latestUpdatesNextPageSelector(): String? = "div.pagination a.next"
 
     // =========================== Anime Details ============================
-    override fun animeDetailsParse(response: Response): SAnime = animeDetailsParse(response.useAsJsoup())
-
     override fun animeDetailsParse(document: Document): SAnime = SAnime.create().apply {
         val detail = document.selectFirst("div.infozingle") ?: return@apply
         title = detail.selectFirst("p:contains(Judul) span")!!.text().substringAfter(" ")
@@ -107,12 +99,6 @@ class OtakuDesu : AnimeHttpLegacySource() {
     }
 
     // ============================== Episodes ==============================
-    override fun episodeListParse(response: Response): List<SEpisode> {
-        val document = response.useAsJsoup()
-
-        return document.select(episodeListSelector()).map(::episodeFromElement)
-    }
-
     override fun episodeListSelector(): String = "div.episodelist ul li"
 
     private val episodePattern = Regex("""(?i)(?:Episode|Ep|Eps)\s*(\d+(?:\.\d+)?)""")
@@ -149,42 +135,38 @@ class OtakuDesu : AnimeHttpLegacySource() {
 
         val ui = when {
             document.selectFirst(genreSelector) == null -> "search"
-            document.selectFirst(searchAnimeSelector()) == null -> "genres"
+            document.selectFirst("ul.chivsrc li") == null -> "genres"
             else -> "unknown"
         }
 
         val animes = when (ui) {
-            "genres" -> document.select(genreSelector).map { searchAnimeFromElement(it, ui) }
-            "search" -> document.select(searchAnimeSelector()).map { searchAnimeFromElement(it, ui) }
+            "genres" -> document.select(genreSelector).map { searchAnimeFromElement(it) }
+            "search" -> document.select("ul.chivsrc li").map { searchAnimeFromElement(it) }
             else -> document.select(latestUpdatesSelector()).map(::latestUpdatesFromElement)
         }
 
-        val hasNextPage = document.selectFirst(searchAnimeNextPageSelector()) != null
+        val hasNextPage = searchAnimeNextPageSelector()?.let { document.selectFirst(it) != null } ?: false
 
         return AnimesPage(animes, hasNextPage)
     }
 
-    override fun searchAnimeSelector(): String = "ul.chivsrc li"
+    override fun searchAnimeSelector(): String = "ul.chivsrc li, div.col-anime-con"
 
-    private fun searchAnimeFromElement(element: Element, ui: String): SAnime = SAnime.create().apply {
-        when (ui) {
-            "search" -> {
-                setUrlWithoutDomain(element.selectFirst("h2 a")!!.attr("href"))
-                title = element.selectFirst("h2 a")!!.text()
-                thumbnail_url = element.selectFirst("img")!!.attr("src")
-            }
-            "genres" -> {
-                setUrlWithoutDomain(element.selectFirst("div.col-anime-title a")!!.attr("href"))
-                title = element.selectFirst("div.col-anime-title a")!!.text()
-                thumbnail_url = element.selectFirst("div.col-anime-cover img")!!.attr("src")
-            }
-        }
+    override fun searchAnimeFromElement(element: Element): SAnime = SAnime.create().apply {
+        val link = element.selectFirst("h2 a, div.col-anime-title a, a")
+            ?: throw Exception("Missing search link")
+        setUrlWithoutDomain(link.attr("href"))
+        title = link.text().trim()
+
+        val img = element.selectFirst("img, div.col-anime-cover img")
+        thumbnail_url = img?.attr("src")
     }
 
-    override fun searchAnimeNextPageSelector(): String = "div.pagination a.next"
+    override fun searchAnimeNextPageSelector(): String? = "div.pagination a.next"
 
     // ============================ Video Links =============================
-    override fun videoListSelector() = "div.mirrorstream ul li > a, ul.m360p a, ul.m480p a, ul.m720p a, ul.m1080p a, div.download ul li a"
+    override fun videoListSelector(): String = throw UnsupportedOperationException()
+    override fun videoFromElement(element: Element): Video = throw UnsupportedOperationException()
 
     override fun videoListParse(response: Response): List<Video> {
         val doc = response.useAsJsoup()
@@ -200,8 +182,8 @@ class OtakuDesu : AnimeHttpLegacySource() {
                     .parallelMapNotNullBlocking {
                         runCatching { getEmbedLinks(it, streamAction, nonce) }.getOrNull()
                     }
-                    .parallelCatchingFlatMapBlocking {
-                        getVideosFromEmbed(it.first, it.second)
+                    .parallelCatchingFlatMapBlocking { server ->
+                        getVideosFromEmbed(server.first, server.second)
                     }
             } else emptyList()
         } else emptyList()
@@ -210,8 +192,8 @@ class OtakuDesu : AnimeHttpLegacySource() {
         val iframeVideos = iframeElements.mapNotNull {
             val src = it.attr("src").ifEmpty { it.attr("data-src") }
             if (src.isNotBlank()) Pair("Default", src) else null
-        }.parallelCatchingFlatMapBlocking {
-            getVideosFromEmbed(it.first, it.second)
+        }.parallelCatchingFlatMapBlocking { server ->
+            getVideosFromEmbed(server.first, server.second)
         }
 
         val downloadElements = doc.select("div.download ul li, div.cukder ul li, div.download-eps ul li")
@@ -225,12 +207,18 @@ class OtakuDesu : AnimeHttpLegacySource() {
                     Pair(name, href)
                 } else null
             }
-        }.parallelCatchingFlatMapBlocking {
-            getVideosFromEmbed(it.first, it.second)
+        }.parallelCatchingFlatMapBlocking { server ->
+            getVideosFromEmbed(server.first, server.second)
         }
 
         val allVideos = ajaxVideos + iframeVideos + downloadVideos
-        return allVideos.distinctBy { it.videoUrl ?: it.url }
+        return allVideos.distinctBy { it.videoUrl ?: it.quality }
+    }
+
+    private fun String.b64Decode(): String = try {
+        String(Base64.decode(this, Base64.DEFAULT), Charsets.UTF_8)
+    } catch (e: Exception) {
+        this
     }
 
     private suspend fun getEmbedLinks(element: Element, action: String, nonce: String): Pair<String, String> {
@@ -300,7 +288,7 @@ class OtakuDesu : AnimeHttpLegacySource() {
                     } else {
                         val src = doc.selectFirst("video source, video")?.attr("src")
                         if (!src.isNullOrBlank()) {
-                            listOf(Video(src, server, src, r2Headers))
+                            listOf(Video(videoUrl = src, quality = server, videoUrl = src, headers = r2Headers))
                         } else emptyList()
                     }
                 }
@@ -398,8 +386,6 @@ class OtakuDesu : AnimeHttpLegacySource() {
                 .substringBefore('"')
         }.getOrDefault("")
     }
-
-    override fun videoFromElement(element: Element) = throw UnsupportedOperationException()
 
     // ============================== Filters ===============================
     override fun getFilterList(): AnimeFilterList = AnimeFilterList(
