@@ -21,6 +21,7 @@ import eu.kanade.tachiyomi.animesource.model.Video
 import eu.kanade.tachiyomi.multisrc.animestream.AnimeStream
 import eu.kanade.tachiyomi.network.GET
 import eu.kanade.tachiyomi.network.awaitSuccess
+import keiyoushi.lib.unpacker.Unpacker
 import keiyoushi.utils.parallelCatchingFlatMapBlocking
 import keiyoushi.utils.tryParse
 import keiyoushi.utils.useAsJsoup
@@ -271,10 +272,10 @@ class Animasu :
         }
 
         // Parse Download section for all quality resolutions (360p, 480p, 720p, 1080p)
-        val downloadContainers = document.select("div.soradl, div.soraddl, div.soraurl, div.smokedl, div.download, div.download-eps, div.mctnx, div.bghome, .mctn, div.dlx, div.links_table")
+        val downloadContainers = document.select("div.soradl, div.soraddl, div.soraurl, div.smokedl, div.download, div.download-eps, div.mctnx, div.bghome, .mctn, div.dlx, div.links_table, div.box-download, div.soraurlx")
         val downloadEntries = downloadContainers.select("div.soraurlx, ul li, li, tr, p").ifEmpty { downloadContainers }
         val downloadServerList = downloadEntries.flatMap { entry ->
-            val quality = entry.selectFirst("strong, b, span.fl-l, span, th, td.quality")?.text()?.trim() ?: "Download"
+            val quality = entry.selectFirst("strong, b, span.fl-l, span, th, td.quality, .quality")?.text()?.trim() ?: "Download"
             entry.select("a[href]").mapNotNull { a ->
                 val server = a.text().trim()
                 val href = a.attr("href").trim()
@@ -284,7 +285,8 @@ class Animasu :
                     "streamwish" in lowerHref || "blogger" in lowerHref || "blogspot" in lowerHref ||
                     "mp4upload" in lowerHref || "yourupload" in lowerHref || "streamtape" in lowerHref ||
                     "dood" in lowerHref || "ok.ru" in lowerHref || "gdrive" in lowerHref ||
-                    lowerHref.endsWith(".mp4") || lowerHref.endsWith(".m3u8")
+                    "drive.google" in lowerHref || "mega.nz" in lowerHref || "mediafire" in lowerHref ||
+                    lowerHref.endsWith(".mp4") || lowerHref.endsWith(".m3u8") || lowerHref.endsWith(".mkv")
                 )
                 if (isSupported) {
                     val label = if (server.isNotBlank() && !quality.contains(server, ignoreCase = true)) "$server ($quality)" else quality
@@ -508,13 +510,56 @@ class Animasu :
                     if (!subIframe.isNullOrBlank() && subIframe != url) {
                         getVideoList(extractIframeUrl(subIframe), name)
                     } else {
+                        val videoList = mutableListOf<Video>()
                         val videoSrc = doc?.selectFirst("video source, video")?.attr("src")
                         if (!videoSrc.isNullOrBlank()) {
                             if (videoSrc.contains(".m3u8")) {
-                                playlistUtils.extractFromHls(videoSrc, referer = url, videoNameGen = { if (name.isNotBlank()) "$name - $it" else it })
+                                videoList.addAll(playlistUtils.extractFromHls(videoSrc, referer = url, videoNameGen = { if (name.isNotBlank()) "$name - $it" else it }))
                             } else {
-                                listOf(Video(videoSrc, if (name.isNotBlank()) name else "Video", headers = reqHeaders))
+                                videoList.add(Video(videoSrc, if (name.isNotBlank()) name else "Video", headers = reqHeaders))
                             }
+                        }
+
+                        // Deep scan scripts and HTML for PlayerJS / JWPlayer / HLS / unpacked JS
+                        val htmlContent = doc?.html().orEmpty()
+                        val scriptData = doc?.select("script")?.joinToString("\n") { it.data() }.orEmpty()
+                        val combinedText = buildString {
+                            append(htmlContent)
+                            append("\n")
+                            append(scriptData)
+                            if (Unpacker.hasPacked(scriptData)) {
+                                append("\n")
+                                append(runCatching { Unpacker.unpack(scriptData) }.getOrDefault(""))
+                            }
+                        }
+
+                        // Check PlayerJS multi quality [480p]https://...,[720p]https://...
+                        val playerJsMatches = Regex("""\[(\d+p?)\](https?://[^\s,\[\]\"\'<>]+)""").findAll(combinedText)
+                        playerJsMatches.forEach { match ->
+                            val q = match.groupValues[1]
+                            val vUrl = match.groupValues[2]
+                            if (vUrl.contains(".m3u8")) {
+                                videoList.addAll(playlistUtils.extractFromHls(vUrl, referer = url, videoNameGen = { "$name ($q) - $it" }))
+                            } else {
+                                videoList.add(Video(vUrl, "$name ($q)", headers = reqHeaders))
+                            }
+                        }
+
+                        // Check JS sources/file
+                        val sourceMatches = Regex("""(?:file|source|src|url)\s*:\s*["']([^"']+\.(?:mp4|m3u8)[^"']*)["']""", RegexOption.IGNORE_CASE).findAll(combinedText)
+                        sourceMatches.forEach { match ->
+                            val sUrl = match.groupValues[1]
+                            if (sUrl.startsWith("http")) {
+                                if (sUrl.contains(".m3u8")) {
+                                    videoList.addAll(playlistUtils.extractFromHls(sUrl, referer = url, videoNameGen = { if (name.isNotBlank()) "$name - $it" else it }))
+                                } else {
+                                    videoList.add(Video(sUrl, if (name.isNotBlank()) name else "Direct", headers = reqHeaders))
+                                }
+                            }
+                        }
+
+                        if (videoList.isNotEmpty()) {
+                            videoList.distinctBy { it.videoUrl }
                         } else {
                             Log.i("Animasu", "Unrecognized server at getVideoList => Name -> $name || URL => $url")
                             emptyList()
