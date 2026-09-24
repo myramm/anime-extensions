@@ -54,17 +54,16 @@ class AnimeIndo : ParsedAnimeHttpLegacySource() {
         GET("$baseUrl/trending?page=$page", headers)
 
     override fun popularAnimeSelector(): String =
-        "div.relative.group:has(a[href*=/tv-show/], a[href*=/movie/]), a[href*=/tv-show/], a[href*=/movie/]"
+        "div.relative.group:has(a[href*=/tv-show/], a[href*=/movie/])"
 
     override fun popularAnimeFromElement(element: Element): SAnime = SAnime.create().apply {
-        val link = if (element.tagName().lowercase() == "a") element else element.selectFirst("a[href*=/tv-show/], a[href*=/movie/]")
-            ?: throw Exception("No link")
+        val link = element.selectFirst("a[href*=/tv-show/], a[href*=/movie/]") ?: element
         val href = link.attr("href").trim()
         setUrlWithoutDomain(href)
 
         val img = element.selectFirst("img")
         title = img?.attr("alt")?.trim()
-            ?.ifEmpty { link.selectFirst("h2, h3, div.font-bold, .title")?.text()?.trim() }
+            ?.ifEmpty { element.selectFirst("h2, h3, div.font-bold, .title")?.text()?.trim() }
             ?: link.text().trim()
 
         thumbnail_url = img?.attr("data-src")?.ifEmpty { img.attr("src") }
@@ -75,6 +74,15 @@ class AnimeIndo : ParsedAnimeHttpLegacySource() {
     override fun popularAnimeNextPageSelector(): String? =
         "nav.pagination a[rel=next], a:contains(Next), nav[role=navigation] a:has(svg:last-child)"
 
+    override fun popularAnimeParse(response: Response): AnimesPage {
+        val document = response.useAsJsoup()
+        val animes = document.select(popularAnimeSelector())
+            .mapNotNull { runCatching { popularAnimeFromElement(it) }.getOrNull() }
+            .distinctBy { it.url.trim().removeSuffix("/") }
+        val hasNextPage = popularAnimeNextPageSelector()?.let { document.selectFirst(it) != null } ?: false
+        return AnimesPage(animes, hasNextPage)
+    }
+
     // =============================== Latest ===============================
     override fun latestUpdatesRequest(page: Int): Request =
         GET("$baseUrl/browse?page=$page", headers)
@@ -84,6 +92,15 @@ class AnimeIndo : ParsedAnimeHttpLegacySource() {
     override fun latestUpdatesFromElement(element: Element): SAnime = popularAnimeFromElement(element)
 
     override fun latestUpdatesNextPageSelector(): String? = popularAnimeNextPageSelector()
+
+    override fun latestUpdatesParse(response: Response): AnimesPage {
+        val document = response.useAsJsoup()
+        val animes = document.select(latestUpdatesSelector())
+            .mapNotNull { runCatching { latestUpdatesFromElement(it) }.getOrNull() }
+            .distinctBy { it.url.trim().removeSuffix("/") }
+        val hasNextPage = latestUpdatesNextPageSelector()?.let { document.selectFirst(it) != null } ?: false
+        return AnimesPage(animes, hasNextPage)
+    }
 
     // =============================== Search ===============================
     override fun searchAnimeRequest(page: Int, query: String, filters: AnimeFilterList): Request {
@@ -131,6 +148,15 @@ class AnimeIndo : ParsedAnimeHttpLegacySource() {
     override fun searchAnimeFromElement(element: Element): SAnime = popularAnimeFromElement(element)
 
     override fun searchAnimeNextPageSelector(): String? = popularAnimeNextPageSelector()
+
+    override fun searchAnimeParse(response: Response): AnimesPage {
+        val document = response.useAsJsoup()
+        val animes = document.select(searchAnimeSelector())
+            .mapNotNull { runCatching { searchAnimeFromElement(it) }.getOrNull() }
+            .distinctBy { it.url.trim().removeSuffix("/") }
+        val hasNextPage = searchAnimeNextPageSelector()?.let { document.selectFirst(it) != null } ?: false
+        return AnimesPage(animes, hasNextPage)
+    }
 
     // ============================== Filters ===============================
     override fun getFilterList(): AnimeFilterList = AnimeIndoFilters.getFilterList()

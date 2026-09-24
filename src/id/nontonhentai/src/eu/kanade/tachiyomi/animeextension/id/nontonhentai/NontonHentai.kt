@@ -7,6 +7,7 @@ import aniyomi.lib.pixeldrainextractor.PixelDrainExtractor
 import aniyomi.lib.streamwishextractor.StreamWishExtractor
 import aniyomi.lib.vidhideextractor.VidHideExtractor
 import eu.kanade.tachiyomi.animesource.model.AnimeFilterList
+import eu.kanade.tachiyomi.animesource.model.AnimesPage
 import eu.kanade.tachiyomi.animesource.model.SAnime
 import eu.kanade.tachiyomi.animesource.model.SEpisode
 import eu.kanade.tachiyomi.animesource.model.Video
@@ -42,7 +43,7 @@ class NontonHentai : ParsedAnimeHttpLegacySource() {
     // ============================== Popular ===============================
     override fun popularAnimeRequest(page: Int): Request = GET("$baseUrl/anime/page/$page/?order=popular", headers)
 
-    override fun popularAnimeSelector(): String = "div.listupd article, div.bs article, article.bsx, .bsx, div.animpost"
+    override fun popularAnimeSelector(): String = "div.listupd article.bsx, div.listupd article, article.bsx"
 
     override fun popularAnimeFromElement(element: Element): SAnime = SAnime.create().apply {
         val link = element.selectFirst("a") ?: return@apply
@@ -53,6 +54,15 @@ class NontonHentai : ParsedAnimeHttpLegacySource() {
 
     override fun popularAnimeNextPageSelector(): String? = "div.pagination a.next, a.next, nav.pagination a.next"
 
+    override fun popularAnimeParse(response: Response): AnimesPage {
+        val document = response.useAsJsoup()
+        val anime = document.select(popularAnimeSelector())
+            .mapNotNull { runCatching { popularAnimeFromElement(it) }.getOrNull() }
+            .distinctBy { it.url.trim().removeSuffix("/") }
+        val hasNextPage = popularAnimeNextPageSelector()?.let { document.selectFirst(it) != null } ?: false
+        return AnimesPage(anime, hasNextPage)
+    }
+
     // =============================== Latest ===============================
     override fun latestUpdatesRequest(page: Int): Request =
         if (page == 1) GET("$baseUrl/anime/?order=update", headers) else GET("$baseUrl/anime/page/$page/?order=update", headers)
@@ -62,6 +72,15 @@ class NontonHentai : ParsedAnimeHttpLegacySource() {
     override fun latestUpdatesFromElement(element: Element): SAnime = popularAnimeFromElement(element)
 
     override fun latestUpdatesNextPageSelector(): String? = popularAnimeNextPageSelector()
+
+    override fun latestUpdatesParse(response: Response): AnimesPage {
+        val document = response.useAsJsoup()
+        val anime = document.select(latestUpdatesSelector())
+            .mapNotNull { runCatching { latestUpdatesFromElement(it) }.getOrNull() }
+            .distinctBy { it.url.trim().removeSuffix("/") }
+        val hasNextPage = latestUpdatesNextPageSelector()?.let { document.selectFirst(it) != null } ?: false
+        return AnimesPage(anime, hasNextPage)
+    }
 
     // =============================== Search ===============================
     override fun searchAnimeRequest(page: Int, query: String, filters: AnimeFilterList): Request {
@@ -78,6 +97,15 @@ class NontonHentai : ParsedAnimeHttpLegacySource() {
     override fun searchAnimeFromElement(element: Element): SAnime = popularAnimeFromElement(element)
 
     override fun searchAnimeNextPageSelector(): String? = popularAnimeNextPageSelector()
+
+    override fun searchAnimeParse(response: Response): AnimesPage {
+        val document = response.useAsJsoup()
+        val anime = document.select(searchAnimeSelector())
+            .mapNotNull { runCatching { searchAnimeFromElement(it) }.getOrNull() }
+            .distinctBy { it.url.trim().removeSuffix("/") }
+        val hasNextPage = searchAnimeNextPageSelector()?.let { document.selectFirst(it) != null } ?: false
+        return AnimesPage(anime, hasNextPage)
+    }
 
     override fun getFilterList(): AnimeFilterList = NontonHentaiFilters.FILTER_LIST
 
