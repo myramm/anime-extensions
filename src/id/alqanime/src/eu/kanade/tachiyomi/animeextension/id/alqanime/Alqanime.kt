@@ -40,7 +40,7 @@ class Alqanime : ParsedAnimeHttpLegacySource() {
     override fun popularAnimeRequest(page: Int): Request =
         if (page == 1) GET("$baseUrl/popular/", headers) else GET("$baseUrl/popular/page/$page/", headers)
 
-    override fun popularAnimeSelector(): String = "div.listupd div.bsx, div.listupd article.bsx, div.bsx, article.bsx, div.article, div.post, article"
+    override fun popularAnimeSelector(): String = "div.listupd article.bsx, div.listupd div.bsx, div.listupd article, article.bsx, div.bsx"
 
     override fun popularAnimeFromElement(element: Element): SAnime = SAnime.create().apply {
         val link = element.selectFirst("a") ?: return@apply
@@ -55,7 +55,6 @@ class Alqanime : ParsedAnimeHttpLegacySource() {
         val document = response.useAsJsoup()
         val anime = document.select(popularAnimeSelector())
             .mapNotNull { runCatching { popularAnimeFromElement(it) }.getOrNull() }
-            .filter { it.title.isNotBlank() && it.url.isNotBlank() }
             .distinctBy { it.url.trim().removeSuffix("/") }
         val hasNextPage = popularAnimeNextPageSelector()?.let { document.selectFirst(it) != null } ?: false
         return AnimesPage(anime, hasNextPage)
@@ -75,7 +74,6 @@ class Alqanime : ParsedAnimeHttpLegacySource() {
         val document = response.useAsJsoup()
         val anime = document.select(latestUpdatesSelector())
             .mapNotNull { runCatching { latestUpdatesFromElement(it) }.getOrNull() }
-            .filter { it.title.isNotBlank() && it.url.isNotBlank() }
             .distinctBy { it.url.trim().removeSuffix("/") }
         val hasNextPage = latestUpdatesNextPageSelector()?.let { document.selectFirst(it) != null } ?: false
         return AnimesPage(anime, hasNextPage)
@@ -110,7 +108,6 @@ class Alqanime : ParsedAnimeHttpLegacySource() {
         val document = response.useAsJsoup()
         val anime = document.select(searchAnimeSelector())
             .mapNotNull { runCatching { searchAnimeFromElement(it) }.getOrNull() }
-            .filter { it.title.isNotBlank() && it.url.isNotBlank() }
             .distinctBy { it.url.trim().removeSuffix("/") }
         val hasNextPage = searchAnimeNextPageSelector()?.let { document.selectFirst(it) != null } ?: false
         return AnimesPage(anime, hasNextPage)
@@ -120,8 +117,8 @@ class Alqanime : ParsedAnimeHttpLegacySource() {
 
     // =========================== Anime Details ============================
     override fun animeDetailsParse(document: Document): SAnime = SAnime.create().apply {
-        title = document.selectFirst("h1.entry-title, h1")?.text()?.trim().orEmpty()
-        thumbnail_url = document.selectFirst("div.thumb img, .entry-content img, .bigcontent img, .post-thumbnail img, div.limage img, .thumb")?.getImageUrl()
+        title = document.selectFirst("h1.entry-title, .entry-title")?.text()?.trim().orEmpty()
+        thumbnail_url = document.selectFirst("div.thumb img, div.bigcontent img, .post-thumbnail img, div.limage img, .thumb")?.getImageUrl()
 
         val statusText = document.selectFirst("div.info-content span:contains(Status), div.spe span:contains(Status), .post-content span:contains(Status)")?.text().orEmpty()
         status = when {
