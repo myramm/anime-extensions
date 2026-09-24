@@ -4,6 +4,7 @@ import androidx.preference.ListPreference
 import androidx.preference.PreferenceScreen
 import aniyomi.lib.bloggerextractor.BloggerExtractor
 import aniyomi.lib.mp4uploadextractor.Mp4uploadExtractor
+import aniyomi.lib.pixeldrainextractor.PixelDrainExtractor
 import aniyomi.lib.streamwishextractor.StreamWishExtractor
 import aniyomi.lib.vidhideextractor.VidHideExtractor
 import aniyomi.lib.youruploadextractor.YourUploadExtractor
@@ -48,6 +49,7 @@ class Samehadaku :
     private val bloggerExtractor by lazy { BloggerExtractor(client) }
     private val yourUploadExtractor by lazy { YourUploadExtractor(client) }
     private val mp4uploadExtractor by lazy { Mp4uploadExtractor(client) }
+    private val pixelDrainExtractor by lazy { PixelDrainExtractor() }
     private val preferences by getPreferencesLazy()
 
     // ============================== Popular ===============================
@@ -171,7 +173,7 @@ class Samehadaku :
         val parseUrl = response.request.url.toUrl()
         val url = "${parseUrl.protocol}://${parseUrl.host}"
 
-        val ajaxVideos = doc.select("#server > ul > li > div")
+        val ajaxVideos = doc.select("#server > ul > li > div, div.server > ul > li > div, .east_player_option")
             .parallelMapNotNullBlocking {
                 runCatching { getEmbedLinks(url, it) }.getOrNull()
             }
@@ -179,9 +181,9 @@ class Samehadaku :
                 getVideosFromEmbed(server.first, server.second)
             }
 
-        val downloadElements = doc.select("div.download ul li, div.download-eps ul li")
+        val downloadElements = doc.select("div.download ul li, div.download-eps ul li, div.soraddl li")
         val downloadVideos = downloadElements.flatMap { li ->
-            val quality = li.selectFirst("strong, b, span")?.text()?.trim() ?: "Download"
+            val quality = li.selectFirst("strong, b, span.fl-l, span")?.text()?.trim() ?: "Download"
             li.select("a[href]").mapNotNull { a ->
                 val server = a.text().trim()
                 val href = a.attr("href").trim()
@@ -239,28 +241,52 @@ class Samehadaku :
     }
 
     private suspend fun getEmbedLinks(url: String, element: Element): Pair<String, String> {
+        val post = element.attr("data-post").takeIf(String::isNotBlank) ?: return Pair("", "")
+        val nume = element.attr("data-nume").takeIf(String::isNotBlank) ?: return Pair("", "")
+        val type = element.attr("data-type").takeIf(String::isNotBlank) ?: return Pair("", "")
+
         val form = FormBody.Builder().apply {
             add("action", "player_ajax")
-            add("post", element.attr("data-post"))
-            add("nume", element.attr("data-nume"))
-            add("type", element.attr("data-type"))
+            add("post", post)
+            add("nume", nume)
+            add("type", type)
         }.build()
 
         val ajaxHeaders = headers.newBuilder()
             .set("User-Agent", USER_AGENT)
             .build()
 
-        return client.newCall(POST("$url/wp-admin/admin-ajax.php", body = form, headers = ajaxHeaders))
+        val resp = client.newCall(POST("$url/wp-admin/admin-ajax.php", body = form, headers = ajaxHeaders))
             .awaitSuccess()
             .bodyString()
-            .let {
-                val link = srcRegex.find(it)?.groupValues[1]?.takeIf(String::isNotBlank)!!
-                val server = element.selectFirst("span")?.text() ?: ""
-                Pair(server, link)
+
+        val serverName = element.selectFirst("span")?.text()?.trim().orEmpty().ifEmpty {
+            element.text().trim().ifEmpty { "Server" }
+        }
+
+        val link = when {
+            srcRegex.containsMatchIn(resp) -> srcRegex.find(resp)?.groupValues?.get(1).orEmpty()
+            "vidlion" in resp || "vidhide" in resp -> {
+                val id = Regex("""(?:id=|\bid\s*=\s*["']?)([a-zA-Z0-9]+)""").find(resp)?.groupValues?.get(1)
+                if (!id.isNullOrBlank()) "https://vidhidepro.com/embed/$id" else ""
             }
+            "streamwish" in resp || "wishembed" in resp -> {
+                val id = Regex("""(?:id=|\bid\s*=\s*["']?)([a-zA-Z0-9]+)""").find(resp)?.groupValues?.get(1)
+                if (!id.isNullOrBlank()) "https://streamwish.to/e/$id" else ""
+            }
+            "filelions" in resp -> {
+                val id = Regex("""(?:id=|\bid\s*=\s*["']?)([a-zA-Z0-9]+)""").find(resp)?.groupValues?.get(1)
+                if (!id.isNullOrBlank()) "https://filelions.to/v/$id" else ""
+            }
+            resp.trim().startsWith("http") -> resp.trim()
+            else -> ""
+        }
+
+        return Pair(serverName, link)
     }
 
     private suspend fun getVideosFromEmbed(server: String, link: String): List<Video> {
+        if (link.isBlank()) return emptyList()
         val videoHeaders = headers.newBuilder()
             .set("User-Agent", USER_AGENT)
             .add("Referer", link)
@@ -281,12 +307,30 @@ class Samehadaku :
                         .add("Referer", link)
                         .add("Accept", "*/*")
                         .build()
-                    val doc = client.newCall(GET(link, r2Headers)).awaitSuccess().useAsJsoup()
+                    val embedUrl = if ("/view/" in link) link.replace("/view/", "/embed/") else link
+                    val doc = client.newCall(GET(embedUrl, r2Headers)).awaitSuccess().useAsJsoup()
                     val dataPage = doc.selectFirst("div#app")?.attr("data-page") ?: return emptyList()
                     val json = JSONObject(dataPage)
-                    val props = json.getJSONObject("props")
-                    val videoUrl = props.getString("url")
-                    listOf(Video(videoUrl, server, headers = r2Headers))
+                    val props = json.optJSONObject("props")
+                    val directUrl = props?.optString("url")
+                    if (!directUrl.isNullOrBlank()) {
+                        listOf(Video(directUrl, server, headers = r2Headers))
+                    } else {
+                        val fileObj = props?.optJSONObject("files") ?: props?.optJSONObject("file")
+                        val storage = fileObj?.optJSONObject("storage")
+                        val config = storage?.optJSONObject("config")
+                        val s3Url = config?.optString("s3_url")
+                        val path = fileObj?.optString("path")
+                        if (!s3Url.isNullOrBlank() && !path.isNullOrBlank()) {
+                            val fullUrl = "$s3Url/$path"
+                            listOf(Video(fullUrl, server, headers = r2Headers))
+                        } else {
+                            val src = doc.selectFirst("video source, video")?.attr("src")
+                            if (!src.isNullOrBlank()) {
+                                listOf(Video(src, server, headers = r2Headers))
+                            } else emptyList()
+                        }
+                    }
                 }
 
                 // Blogger video
@@ -300,7 +344,7 @@ class Samehadaku :
                 }
 
                 // VidHide
-                "vidhide" in link || "streamhide" in link -> {
+                "vidhide" in link || "streamhide" in link || "vidlion" in link || "odvidhide" in link -> {
                     VidHideExtractor(client, cleanHeaders).videosFromUrl(link)
                 }
 
@@ -333,11 +377,14 @@ class Samehadaku :
 
                 // Pixeldrain
                 "pixeldrain" in link -> {
-                    val id = Regex("""/(?:u|file)/([a-zA-Z0-9]+)""").find(link)?.groupValues?.get(1)
+                    val id = Regex("""/(?:u|file|api/file)/([a-zA-Z0-9]+)""").find(link)?.groupValues?.get(1)
                     if (!id.isNullOrBlank()) {
                         val dlUrl = "https://pixeldrain.com/api/file/$id?download"
-                        listOf(Video(dlUrl, "$server (PixelDrain)", headers = cleanHeaders))
-                    } else emptyList()
+                        val label = if ("pixeldrain" in server.lowercase()) server else "$server (PixelDrain)"
+                        listOf(Video(dlUrl, label, headers = cleanHeaders))
+                    } else {
+                        pixelDrainExtractor.videosFromUrl(link, "$server - ")
+                    }
                 }
 
                 // Krakenfiles
