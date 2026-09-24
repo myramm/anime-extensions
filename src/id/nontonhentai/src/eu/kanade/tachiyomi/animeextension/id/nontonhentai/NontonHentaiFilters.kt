@@ -614,5 +614,5 @@ object NontonHentaiFilters {
             Pair("Winter 2020", "winter-2020"),
             Pair("Winter 2022", "winter-2022"),
         )
-    }}
-}}
+    }
+}
