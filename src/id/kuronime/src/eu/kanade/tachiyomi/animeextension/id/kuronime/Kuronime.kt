@@ -96,20 +96,20 @@ class Kuronime :
 
     override fun popularAnimeNextPageSelector(): String = "div.pagination > a.next"
 
-    override fun popularAnimeRequest(page: Int): Request = GET("$baseUrl/anime/page/$page")
+    override fun popularAnimeRequest(page: Int): Request =
+        if (page == 1) GET("$baseUrl/anime/") else GET("$baseUrl/anime/page/$page/")
 
-    override fun popularAnimeSelector(): String = "div.listupd > article"
+    override fun popularAnimeSelector(): String = "div.listupd > article, div.listupd article.bsx, div.listupd div.bsx, article"
 
     override fun searchAnimeFromElement(element: Element): SAnime = getAnimeFromAnimeElement(element)
 
-    override fun searchAnimeNextPageSelector(): String = "a.next.page-numbers"
+    override fun searchAnimeNextPageSelector(): String = "a.next.page-numbers, div.pagination a.next"
 
     override fun searchAnimeRequest(page: Int, query: String, filters: AnimeFilterList): Request {
-        // filter and stuff in v2
-        return GET("$baseUrl/page/$page/?s=$query")
+        return if (page == 1) GET("$baseUrl/?s=$query") else GET("$baseUrl/page/$page/?s=$query")
     }
 
-    override fun searchAnimeSelector(): String = "div.listupd > article"
+    override fun searchAnimeSelector(): String = popularAnimeSelector()
 
     override fun videoListParse(response: Response): List<Video> {
         val document = response.asJsoup()

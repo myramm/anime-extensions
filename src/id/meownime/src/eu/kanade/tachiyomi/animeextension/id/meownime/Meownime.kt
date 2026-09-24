@@ -33,19 +33,19 @@ class Meownime : ParsedAnimeHttpLegacySource() {
 
     override fun headersBuilder() = super.headersBuilder()
         .add("Referer", "$baseUrl/")
-        .add("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
         .add("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8")
+        .add("Accept-Language", "id-ID,id;q=0.9,en-US;q=0.8,en;q=0.7")
 
     // ============================== Popular ===============================
     override fun popularAnimeRequest(page: Int): Request =
         if (page == 1) GET("$baseUrl/", headers) else GET("$baseUrl/page/$page/", headers)
 
-    override fun popularAnimeSelector(): String = "article, div.post, .hentry, div.animpost, div.bsx, div.listupd div.bsx"
+    override fun popularAnimeSelector(): String = "article, div.post, .hentry, div.animpost, div.bsx, div.listupd div.bsx, div.article, .post-item, main article"
 
     override fun popularAnimeFromElement(element: Element): SAnime = SAnime.create().apply {
-        val link = element.selectFirst("h2 a, h3 a, a") ?: return@apply
+        val link = element.selectFirst("h2 a, h3 a, h1 a, a[rel='bookmark'], a") ?: return@apply
         setUrlWithoutDomain(link.attr("href"))
-        title = element.selectFirst("h2.entry-title, h2, h3, .title, a")?.text()?.trim() ?: link.attr("title").trim()
+        title = element.selectFirst("h2.entry-title, h2, h3, .title, a[rel='bookmark'], a")?.text()?.trim() ?: link.attr("title").trim()
         thumbnail_url = element.getImageUrl()
     }
 

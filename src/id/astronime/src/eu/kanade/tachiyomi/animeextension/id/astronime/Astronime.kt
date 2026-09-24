@@ -37,11 +37,12 @@ class Astronime : ParsedAnimeHttpLegacySource() {
 
     override fun headersBuilder() = super.headersBuilder()
         .add("Referer", "$baseUrl/")
-        .add("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
         .add("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8")
+        .add("Accept-Language", "id-ID,id;q=0.9,en-US;q=0.8,en;q=0.7")
 
     // ============================== Popular ===============================
-    override fun popularAnimeRequest(page: Int): Request = GET("$baseUrl/anime/page/$page/?order=popular", headers)
+    override fun popularAnimeRequest(page: Int): Request =
+        if (page == 1) GET("$baseUrl/anime/?order=popular", headers) else GET("$baseUrl/anime/page/$page/?order=popular", headers)
 
     override fun popularAnimeSelector(): String = "div.listupd article.bsx, div.listupd div.bsx, div.listupd article, article.bsx, div.bsx, div.animpost"
 
@@ -90,7 +91,7 @@ class Astronime : ParsedAnimeHttpLegacySource() {
             if (page == 1) GET("$baseUrl/?s=$query", headers) else GET("$baseUrl/page/$page/?s=$query", headers)
         } else {
             val params = AstronimeFilters.getSearchParameters(filters)
-            GET("$baseUrl/anime/page/$page/?$params", headers)
+            if (page == 1) GET("$baseUrl/anime/?$params", headers) else GET("$baseUrl/anime/page/$page/?$params", headers)
         }
     }
 

@@ -37,11 +37,12 @@ class KaitoAni : ParsedAnimeHttpLegacySource() {
 
     override fun headersBuilder() = super.headersBuilder()
         .add("Referer", "$baseUrl/")
-        .add("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
         .add("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8")
+        .add("Accept-Language", "id-ID,id;q=0.9,en-US;q=0.8,en;q=0.7")
 
     // ============================== Popular ===============================
-    override fun popularAnimeRequest(page: Int): Request = GET("$baseUrl/hentai/page/$page/?order=popular", headers)
+    override fun popularAnimeRequest(page: Int): Request =
+        if (page == 1) GET("$baseUrl/hentai/?order=popular", headers) else GET("$baseUrl/hentai/page/$page/?order=popular", headers)
 
     override fun popularAnimeSelector(): String = "div.listupd article.stylefor, article.stylefor, div.listupd article, div.listupd div.bsx, article.bsx, div.bs article"
 
@@ -69,7 +70,7 @@ class KaitoAni : ParsedAnimeHttpLegacySource() {
             if (page == 1) GET("$baseUrl/?s=$query", headers) else GET("$baseUrl/page/$page/?s=$query", headers)
         } else {
             val params = KaitoAniFilters.getSearchParameters(filters)
-            GET("$baseUrl/hentai/page/$page/?$params", headers)
+            if (page == 1) GET("$baseUrl/hentai/?$params", headers) else GET("$baseUrl/hentai/page/$page/?$params", headers)
         }
     }
 
