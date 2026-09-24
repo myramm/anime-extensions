@@ -3,6 +3,7 @@ package eu.kanade.tachiyomi.animeextension.id.otakudesu
 import android.util.Base64
 import androidx.preference.ListPreference
 import androidx.preference.PreferenceScreen
+import aniyomi.lib.bloggerextractor.BloggerExtractor
 import aniyomi.lib.mp4uploadextractor.Mp4uploadExtractor
 import aniyomi.lib.streamwishextractor.StreamWishExtractor
 import aniyomi.lib.vidhideextractor.VidHideExtractor
@@ -27,6 +28,7 @@ import keiyoushi.utils.useAsJsoup
 import okhttp3.FormBody
 import okhttp3.Request
 import okhttp3.Response
+import org.json.JSONObject
 import org.jsoup.Jsoup
 import org.jsoup.nodes.Document
 import org.jsoup.nodes.Element
@@ -176,6 +178,7 @@ class OtakuDesu :
         val nonceAction = if (actions.size >= 2) actions[1] else actions[0]
 
         val nonce = getNonce(nonceAction)
+        if (nonce.isBlank()) return emptyList()
 
         return doc.select(videoListSelector())
             .parallelMapNotNullBlocking {
@@ -194,6 +197,7 @@ class OtakuDesu :
         val id = decodedData.substringAfter("\"id\":").substringBefore(",").substringBefore("}").trim()
         val mirror = decodedData.substringAfter("\"i\":").substringBefore(",").substringBefore("}").trim()
         val quality = decodedData.substringAfter("\"q\":\"").substringBefore("\"").ifEmpty { "Default" }
+        val serverName = element.text().trim().ifEmpty { quality }
 
         val form = FormBody.Builder().apply {
             add("id", id)
@@ -208,67 +212,107 @@ class OtakuDesu :
             .bodyString()
 
         val b64Html = resp.substringAfter("\"data\":\"").substringBefore("\"")
-        if (b64Html.isBlank()) return Pair(quality, "")
+        if (b64Html.isBlank()) return Pair(serverName, "")
 
         val doc = Jsoup.parse(b64Html.b64Decode())
         val url = doc.selectFirst("iframe")?.attr("src").orEmpty()
 
-        return Pair(quality, url)
+        return Pair("$serverName ($quality)", url)
     }
 
-    private val filelionsExtractor by lazy { StreamWishExtractor(client, headers) }
+    private val bloggerExtractor by lazy { BloggerExtractor(client) }
     private val yourUploadExtractor by lazy { YourUploadExtractor(client) }
     private val vidHideExtractor by lazy { VidHideExtractor(client, headers) }
     private val mp4uploadExtractor by lazy { Mp4uploadExtractor(client) }
+    private val streamWishExtractor by lazy { StreamWishExtractor(client, headers) }
 
-    private suspend fun getVideosFromEmbed(quality: String, link: String): List<Video> = when {
-        "filelions" in link || "filedon" in link || "streamwish" in link -> {
-            filelionsExtractor.videosFromUrl(link, videoNameGen = { "StreamWish - $it" })
-        }
+    private suspend fun getVideosFromEmbed(server: String, link: String): List<Video> {
+        if (link.isBlank()) return emptyList()
+        val videoHeaders = headers.newBuilder()
+            .set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
+            .add("Referer", link)
+            .build()
 
-        "yourupload" in link -> {
-            val id = link.substringAfter("id=").substringBefore("&")
-            val url = "https://yourupload.com/embed/$id"
-            yourUploadExtractor.videoFromUrl(url, headers, "YourUpload - $quality")
-        }
-
-        "desustream" in link -> {
-            client.newCall(GET(link, headers)).awaitSuccess().let {
-                val doc = it.useAsJsoup()
-                val script = doc.selectFirst("script:containsData(sources)")?.data().orEmpty()
-                val videoUrl = script.substringAfter("sources:[{")
-                    .substringAfter("file':'")
-                    .substringBefore("'")
-                if (videoUrl.isNotBlank()) {
-                    listOf(Video(videoUrl, "DesuStream - $quality", videoUrl, headers))
-                } else {
-                    emptyList()
+        return runCatching {
+            when {
+                // Filedon, Uservideo, Samevideo (Samehadaku style Inertia/R2 extraction)
+                "filedon" in link || "uservideo" in link || "userdrive" in link || "samevideo" in link -> {
+                    val doc = client.newCall(GET(link, videoHeaders)).awaitSuccess().useAsJsoup()
+                    val dataPage = doc.selectFirst("div#app")?.attr("data-page")
+                    if (!dataPage.isNullOrBlank()) {
+                        val json = JSONObject(dataPage)
+                        val props = json.optJSONObject("props")
+                        val videoUrl = props?.optString("url")
+                        if (!videoUrl.isNullOrBlank()) {
+                            listOf(Video(videoUrl, server, videoUrl, videoHeaders))
+                        } else emptyList()
+                    } else emptyList()
                 }
+
+                // Blogger video
+                "blogger" in link || "bp.blogspot" in link -> {
+                    bloggerExtractor.videosFromUrl(link, headers, server)
+                }
+
+                // VidHide
+                "vidhide" in link || "odvidhide" in link -> {
+                    vidHideExtractor.videosFromUrl(link)
+                }
+
+                // YourUpload
+                "yourupload" in link -> {
+                    val id = link.substringAfter("id=").substringBefore("&")
+                    val url = if ("embed" in link) link else "https://yourupload.com/embed/$id"
+                    yourUploadExtractor.videoFromUrl(url, headers, server)
+                }
+
+                // Mp4upload
+                "mp4upload" in link -> {
+                    mp4uploadExtractor.videosFromUrl(link, headers)
+                }
+
+                // StreamWish / FileLions
+                "streamwish" in link || "filelions" in link || "wishembed" in link -> {
+                    streamWishExtractor.videosFromUrl(link, videoNameGen = { "$server - $it" })
+                }
+
+                // DesuStream / Odcdn
+                "desustream" in link || "odcdn" in link || "odstream" in link -> {
+                    runCatching {
+                        val doc = client.newCall(GET(link, videoHeaders)).awaitSuccess().useAsJsoup()
+                        val script = doc.selectFirst("script:containsData(sources)")?.data().orEmpty()
+                        val videoUrl = script.substringAfter("sources:[{")
+                            .substringAfter("file':'")
+                            .substringBefore("'")
+                        if (videoUrl.isNotBlank() && (videoUrl.startsWith("http") || videoUrl.startsWith("//"))) {
+                            val fixedUrl = if (videoUrl.startsWith("//")) "https:$videoUrl" else videoUrl
+                            listOf(Video(fixedUrl, server, fixedUrl, videoHeaders))
+                        } else {
+                            doc.selectFirst("video source")?.attr("src")?.takeIf(String::isNotBlank)?.let {
+                                listOf(Video(it, server, it, videoHeaders))
+                            }.orEmpty()
+                        }
+                    }.getOrDefault(emptyList())
+                }
+
+                link.endsWith(".mp4") || link.endsWith(".m3u8") || link.contains(".mp4?") || link.contains(".m3u8?") -> {
+                    listOf(Video(link, server, link, videoHeaders))
+                }
+
+                else -> emptyList()
             }
-        }
-
-        "mp4upload" in link -> {
-            mp4uploadExtractor.videosFromUrl(link, headers)
-        }
-
-        "vidhide" in link -> {
-            vidHideExtractor.videosFromUrl(link)
-        }
-
-        link.endsWith(".mp4") || link.endsWith(".m3u8") || link.contains(".mp4?") || link.contains(".m3u8?") -> {
-            listOf(Video(link, "Direct - $quality", link, headers))
-        }
-
-        else -> emptyList()
+        }.getOrDefault(emptyList())
     }
 
     private fun getNonce(action: String): String {
-        val form = FormBody.Builder().add("action", action).build()
-        return client.newCall(POST("$baseUrl/wp-admin/admin-ajax.php", body = form))
-            .execute()
-            .bodyString()
-            .substringAfter(":\"")
-            .substringBefore('"')
+        return runCatching {
+            val form = FormBody.Builder().add("action", action).build()
+            client.newCall(POST("$baseUrl/wp-admin/admin-ajax.php", body = form))
+                .execute()
+                .bodyString()
+                .substringAfter(":\"")
+                .substringBefore('"')
+        }.getOrDefault("")
     }
 
     override fun videoFromElement(element: Element) = throw UnsupportedOperationException()

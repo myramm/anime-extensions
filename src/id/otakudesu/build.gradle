@@ -1,7 +1,7 @@
 ext {
     extName = 'OtakuDesu'
     extClass = '.OtakuDesu'
-    extVersionCode = 44
+    extVersionCode = 45
 }
 
 apply plugin: "kei.plugins.extension.legacy"
@@ -11,4 +11,5 @@ dependencies {
     implementation(project(":lib:streamwishextractor"))
     implementation(project(":lib:vidhideextractor"))
     implementation(project(":lib:mp4uploadextractor"))
+    implementation(project(":lib:bloggerextractor"))
 }
