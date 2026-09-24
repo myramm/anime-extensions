@@ -1,9 +1,7 @@
 ext {
     extName = 'AnimeIndo'
     extClass = '.AnimeIndo'
-    themePkg = 'animestream'
-    baseUrl = 'https://animeindo.skin'
-    overrideVersionCode = 22
+    extVersionCode = 25
 }
 
 apply plugin: "kei.plugins.extension.legacy"
@@ -14,4 +12,11 @@ dependencies {
     implementation(project(":lib:streamtapeextractor"))
     implementation(project(":lib:youruploadextractor"))
     implementation(project(":lib:okruextractor"))
+    implementation(project(":lib:streamwishextractor"))
+    implementation(project(":lib:vidhideextractor"))
+    implementation(project(":lib:bloggerextractor"))
+    implementation(project(":lib:doodextractor"))
+    implementation(project(":lib:pixeldrainextractor"))
+    implementation(project(":lib:playlistutils"))
+    implementation(project(":lib:unpacker"))
 }
