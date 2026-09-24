@@ -103,7 +103,7 @@ class OtakuDesu : ParsedAnimeHttpLegacySource() {
     }
 
     // ============================== Episodes ==============================
-    override fun episodeListSelector(): String = "div.episodelist ul li"
+    override fun episodeListSelector(): String = "div.episodelist ul li:has(a[href*=/episode/])"
 
     private val episodePattern = Regex("""(?i)(?:Episode|Ep|Eps)\s*(\d+(?:\.\d+)?)""")
     private val dateFormatter = SimpleDateFormat("dd MMMM, yyyy", Locale("id", "ID"))
@@ -172,8 +172,30 @@ class OtakuDesu : ParsedAnimeHttpLegacySource() {
     override fun videoListSelector(): String = throw UnsupportedOperationException()
     override fun videoFromElement(element: Element): Video = throw UnsupportedOperationException()
 
+    private val noRedirectClient by lazy { client.newBuilder().followRedirects(false).build() }
+
     override fun videoListParse(response: Response): List<Video> {
         val doc = response.useAsJsoup()
+
+        // 1. Prioritize Download Links (Direct PixelDrain, Mp4Upload, Filedon, etc.)
+        val downloadElements = doc.select("div.download ul li, div.cukder ul li, div.download-eps ul li")
+        val downloadVideos = downloadElements.flatMap { li ->
+            val quality = li.selectFirst("strong, b, span.fl-l")?.text()?.trim() ?: "Download"
+            li.select("a[href]").mapNotNull { a ->
+                val server = a.text().trim()
+                val href = a.attr("href").trim()
+                val lowerServer = server.lowercase()
+                if (href.startsWith("http") && !lowerServer.contains("mega") && !lowerServer.contains("gofile") && !lowerServer.contains("acefile")) {
+                    val name = if (server.isNotBlank()) "$server ($quality)" else quality
+                    Pair(name, href)
+                } else null
+            }
+        }.parallelCatchingFlatMapBlocking { server ->
+            val resolvedUrl = resolveDesuLink(server.second)
+            getVideosFromEmbed(server.first, resolvedUrl)
+        }
+
+        // 2. AJAX Mirror Streams
         val script = doc.select("script").map { it.data() }.firstOrNull { "mirrorstream" in it && "action:" in it }
             ?: doc.select("script").map { it.data() }.firstOrNull { "action:" in it && Regex("""action:\s*["'][a-f0-9]{20,}["']""").containsMatchIn(it) }
             ?: ""
@@ -185,9 +207,14 @@ class OtakuDesu : ParsedAnimeHttpLegacySource() {
             val nonce = getNonce(nonceAction)
             if (nonce.isNotBlank()) {
                 doc.select("div.mirrorstream ul li > a, ul.m360p a, ul.m480p a, ul.m720p a, ul.m1080p a")
+                    .filterNot {
+                        val text = it.text().lowercase()
+                        text.contains("mega") || text.contains("nekocloud")
+                    }
                     .parallelMapNotNullBlocking {
                         runCatching { getEmbedLinks(it, streamAction, nonce) }.getOrNull()
                     }
+                    .filter { it.second.isNotBlank() && !it.second.contains("mega.nz") && !it.second.contains("nekocloud") }
                     .parallelCatchingFlatMapBlocking { server ->
                         getVideosFromEmbed(server.first, server.second)
                     }
@@ -197,35 +224,18 @@ class OtakuDesu : ParsedAnimeHttpLegacySource() {
         val iframeElements = doc.select("div.responsive-embed-stream iframe, div.embed_holder iframe, div#embed_holder iframe, iframe#p-iframe, .player-embed iframe")
         val iframeVideos = iframeElements.mapNotNull {
             val src = it.attr("src").ifEmpty { it.attr("data-src") }
-            if (src.isNotBlank()) Pair("Default", src) else null
+            if (src.isNotBlank() && !src.contains("nekocloud")) Pair("Default", src) else null
         }.parallelCatchingFlatMapBlocking { server ->
             getVideosFromEmbed(server.first, server.second)
         }
 
-        val downloadElements = doc.select("div.download ul li, div.cukder ul li, div.download-eps ul li")
-        val downloadVideos = downloadElements.flatMap { li ->
-            val quality = li.selectFirst("strong, b, span.fl-l")?.text()?.trim() ?: "Download"
-            li.select("a[href]").mapNotNull { a ->
-                val server = a.text().trim()
-                val href = a.attr("href").trim()
-                if (href.startsWith("http")) {
-                    val name = if (server.isNotBlank()) "$server ($quality)" else quality
-                    Pair(name, href)
-                } else null
-            }
-        }.parallelCatchingFlatMapBlocking { server ->
-            val resolvedUrl = resolveDesuLink(server.second)
-            getVideosFromEmbed(server.first, resolvedUrl)
-        }
-
-        val allVideos = ajaxVideos + iframeVideos + downloadVideos
+        val allVideos = downloadVideos + ajaxVideos + iframeVideos
         return allVideos.distinctBy { it.videoUrl }
     }
 
     private fun resolveDesuLink(link: String): String {
         if (!link.contains("link.desustream.com")) return link
         return runCatching {
-            val noRedirectClient = client.newBuilder().followRedirects(false).build()
             val req = GET(link, headers)
             val resp = noRedirectClient.newCall(req).execute()
             val loc = resp.header("Location")
@@ -295,14 +305,37 @@ class OtakuDesu : ParsedAnimeHttpLegacySource() {
 
         return runCatching {
             when {
+                // Pixeldrain
+                "pixeldrain" in link -> {
+                    val id = Regex("""/(?:u|file|api/file)/([a-zA-Z0-9]+)""").find(link)?.groupValues?.get(1)
+                    if (!id.isNullOrBlank()) {
+                        val dlUrl = "https://pixeldrain.com/api/file/$id?download"
+                        val label = if ("pixeldrain" in server.lowercase() || "pdrain" in server.lowercase()) server else "$server (PixelDrain)"
+                        listOf(Video(dlUrl, label, headers = cleanHeaders))
+                    } else {
+                        pixelDrainExtractor.videosFromUrl(link, "$server - ")
+                    }
+                }
+
+                // Mp4upload
+                "mp4upload" in link -> {
+                    val mp4Headers = Headers.Builder()
+                        .add("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36")
+                        .add("Referer", "https://www.mp4upload.com/")
+                        .add("Accept", "*/*")
+                        .build()
+                    mp4uploadExtractor.videosFromUrl(link, mp4Headers)
+                }
+
                 // Filedon, Uservideo, Samevideo (Inertia R2 extraction)
                 "filedon" in link || "uservideo" in link || "userdrive" in link || "samevideo" in link -> {
                     val r2Headers = Headers.Builder()
-                        .add("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
+                        .add("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36")
                         .add("Referer", link)
                         .add("Accept", "*/*")
                         .build()
-                    val doc = client.newCall(GET(link, r2Headers)).awaitSuccess().useAsJsoup()
+                    val embedUrl = if ("/view/" in link) link.replace("/view/", "/embed/") else link
+                    val doc = client.newCall(GET(embedUrl, r2Headers)).awaitSuccess().useAsJsoup()
                     val dataPage = doc.selectFirst("div#app")?.attr("data-page")
                     if (!dataPage.isNullOrBlank()) {
                         val json = JSONObject(dataPage)
@@ -311,33 +344,22 @@ class OtakuDesu : ParsedAnimeHttpLegacySource() {
                         if (!directUrl.isNullOrBlank()) {
                             listOf(Video(directUrl, server, headers = r2Headers))
                         } else {
-                            val fileObj = props?.optJSONObject("file") ?: props?.optJSONObject("files")
+                            val fileObj = props?.optJSONObject("files") ?: props?.optJSONObject("file")
                             val storage = fileObj?.optJSONObject("storage")
                             val config = storage?.optJSONObject("config")
                             val s3Url = config?.optString("s3_url")
                             val path = fileObj?.optString("path")
                             if (!s3Url.isNullOrBlank() && !path.isNullOrBlank()) {
-                                val fullUrl = "$s3Url/$path"
-                                listOf(Video(fullUrl, server, headers = r2Headers))
-                            } else {
-                                val src = doc.selectFirst("video source, video")?.attr("src")
-                                if (!src.isNullOrBlank()) {
-                                    listOf(Video(src, server, headers = r2Headers))
-                                } else emptyList()
-                            }
+                                listOf(Video("$s3Url/$path", server, headers = r2Headers))
+                            } else emptyList()
                         }
-                    } else {
-                        val src = doc.selectFirst("video source, video")?.attr("src")
-                        if (!src.isNullOrBlank()) {
-                            listOf(Video(src, server, headers = r2Headers))
-                        } else emptyList()
-                    }
+                    } else emptyList()
                 }
 
                 // Blogger video
                 "blogger" in link || "bp.blogspot" in link || "video.googleusercontent" in link -> {
                     val bloggerHeaders = Headers.Builder()
-                        .add("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
+                        .add("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36")
                         .add("Referer", "https://www.blogger.com/")
                         .add("Accept", "*/*")
                         .build()
@@ -354,37 +376,16 @@ class OtakuDesu : ParsedAnimeHttpLegacySource() {
                     val id = link.substringAfter("id=").substringBefore("&")
                     val url = if ("embed" in link) link else "https://yourupload.com/embed/$id"
                     val youruploadHeaders = Headers.Builder()
-                        .add("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
+                        .add("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36")
                         .add("Referer", "https://www.yourupload.com/")
                         .add("Accept", "*/*")
                         .build()
                     yourUploadExtractor.videoFromUrl(url, youruploadHeaders, server)
                 }
 
-                // Mp4upload
-                "mp4upload" in link -> {
-                    val mp4Headers = Headers.Builder()
-                        .add("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
-                        .add("Referer", "https://www.mp4upload.com/")
-                        .add("Accept", "*/*")
-                        .build()
-                    mp4uploadExtractor.videosFromUrl(link, mp4Headers)
-                }
-
                 // StreamWish / FileLions
                 "streamwish" in link || "filelions" in link || "wishembed" in link || "wishfast" in link -> {
                     StreamWishExtractor(client, cleanHeaders).videosFromUrl(link, videoNameGen = { "$server - $it" })
-                }
-
-                // Pixeldrain
-                "pixeldrain" in link -> {
-                    val id = Regex("""/(?:u|file|api/file)/([a-zA-Z0-9]+)""").find(link)?.groupValues?.get(1)
-                    if (!id.isNullOrBlank()) {
-                        val dlUrl = "https://pixeldrain.com/api/file/$id?download"
-                        listOf(Video(dlUrl, "$server (PixelDrain)", headers = cleanHeaders))
-                    } else {
-                        pixelDrainExtractor.videosFromUrl(link, "$server - ")
-                    }
                 }
 
                 // DesuStream / Odcdn / Odstream / OtakuWatch
