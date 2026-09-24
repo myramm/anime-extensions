@@ -326,9 +326,19 @@ class Animasu :
 
         val doc = Jsoup.parse(decoded)
         val iframe = doc.selectFirst("iframe")
-        val src = iframe?.attr("src")?.ifEmpty { iframe.attr("data-src") }
+        var src = iframe?.attr("src")?.ifEmpty { iframe.attr("data-src") }
+            ?.ifEmpty { iframe.attr("data-litespeed-src") }
+            ?.ifEmpty { iframe.attr("data-lazy-src") }
+            ?: doc.selectFirst("source")?.attr("src")
             ?: doc.selectFirst("meta[itemprop=embedUrl]")?.attr("content")
+            ?: doc.selectFirst("a")?.attr("href")
             ?: ""
+
+        if (src.isBlank()) {
+            val match = Regex("""(?:src|data-src|file|link|source)\s*[:=]\s*["']([^"']+)["']""", RegexOption.IGNORE_CASE).find(decoded)
+                ?: Regex("""https?://[^\s"'<>]+""").find(decoded)
+            src = match?.groupValues?.getOrNull(1) ?: match?.value ?: ""
+        }
 
         return when {
             src.startsWith("//") -> "https:$src"
@@ -345,6 +355,7 @@ class Animasu :
     private val bloggerExtractor by lazy { BloggerExtractor(client) }
     private val doodExtractor by lazy { DoodExtractor(client) }
     private val pixelDrainExtractor by lazy { PixelDrainExtractor() }
+    private val playlistUtils by lazy { PlaylistUtils(client, headers) }
 
     override suspend fun getVideoList(url: String, name: String): List<Video> {
         if (url.isBlank()) return emptyList()
@@ -470,8 +481,13 @@ class Animasu :
                     gdrivePlayerExtractor.videosFromUrl(gdriveUrl, "Gdrive", cleanHeaders)
                 }
 
+                // HLS / m3u8 stream
+                url.contains(".m3u8") -> {
+                    playlistUtils.extractFromHls(url, referer = "$baseUrl/", videoNameGen = { if (name.isNotBlank()) "$name - $it" else it })
+                }
+
                 // Direct video link
-                url.endsWith(".mp4") || url.endsWith(".m3u8") || url.contains(".mp4?") || url.contains(".m3u8?") -> {
+                url.endsWith(".mp4") || url.contains(".mp4?") -> {
                     val streamHeaders = Headers.Builder()
                         .add("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
                         .add("Accept", "*/*")
@@ -493,7 +509,11 @@ class Animasu :
                     } else {
                         val videoSrc = doc?.selectFirst("video source, video")?.attr("src")
                         if (!videoSrc.isNullOrBlank()) {
-                            listOf(Video(videoSrc, if (name.isNotBlank()) name else "Video", headers = reqHeaders))
+                            if (videoSrc.contains(".m3u8")) {
+                                playlistUtils.extractFromHls(videoSrc, referer = url, videoNameGen = { if (name.isNotBlank()) "$name - $it" else it })
+                            } else {
+                                listOf(Video(videoSrc, if (name.isNotBlank()) name else "Video", headers = reqHeaders))
+                            }
                         } else {
                             Log.i("Animasu", "Unrecognized server at getVideoList => Name -> $name || URL => $url")
                             emptyList()
