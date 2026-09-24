@@ -65,8 +65,15 @@ class KaitoAni : ParsedAnimeHttpLegacySource() {
 
     // =============================== Search ===============================
     override fun searchAnimeRequest(page: Int, query: String, filters: AnimeFilterList): Request {
-        return GET("$baseUrl/page/$page/?s=$query", headers)
+        return if (query.isNotBlank()) {
+            if (page == 1) GET("$baseUrl/?s=$query", headers) else GET("$baseUrl/page/$page/?s=$query", headers)
+        } else {
+            val params = KaitoAniFilters.getSearchParameters(filters)
+            GET("$baseUrl/hentai/page/$page/?$params", headers)
+        }
     }
+
+    override fun getFilterList(): AnimeFilterList = KaitoAniFilters.FILTER_LIST
 
     override fun searchAnimeSelector(): String = "div.listupd article.stylefor, article.stylefor, div.listupd article, div.bs article"
 
