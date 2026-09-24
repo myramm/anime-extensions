@@ -18,10 +18,10 @@ import eu.kanade.tachiyomi.animesource.model.AnimesPage
 import eu.kanade.tachiyomi.animesource.model.SAnime
 import eu.kanade.tachiyomi.animesource.model.SEpisode
 import eu.kanade.tachiyomi.animesource.model.Video
-import eu.kanade.tachiyomi.animesource.online.AnimeHttpSource
 import eu.kanade.tachiyomi.network.GET
 import eu.kanade.tachiyomi.network.awaitSuccess
-import keiyoushi.lib.unpacker.Unpacker
+import keiyoushi.lib.jsunpacker.JsUnpacker
+import keiyoushi.utils.ParsedAnimeHttpLegacySource
 import keiyoushi.utils.parallelCatchingFlatMapBlocking
 import keiyoushi.utils.useAsJsoup
 import okhttp3.Headers
@@ -34,7 +34,7 @@ import org.jsoup.Jsoup
 import org.jsoup.nodes.Document
 import org.jsoup.nodes.Element
 
-class AnimeIndo : AnimeHttpSource() {
+class AnimeIndo : ParsedAnimeHttpLegacySource() {
 
     override val name = "AnimeIndo"
 
@@ -44,7 +44,7 @@ class AnimeIndo : AnimeHttpSource() {
 
     override val supportsLatest = true
 
-    override fun headersBuilder() = Headers.Builder()
+    override fun headersBuilder() = super.headersBuilder()
         .add("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
         .add("Referer", "$baseUrl/")
         .add("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8")
@@ -53,15 +53,37 @@ class AnimeIndo : AnimeHttpSource() {
     override fun popularAnimeRequest(page: Int): Request =
         GET("$baseUrl/trending?page=$page", headers)
 
-    override fun popularAnimeParse(response: Response): AnimesPage =
-        parseAnimePage(response)
+    override fun popularAnimeSelector(): String =
+        "div.relative.group:has(a[href*=/tv-show/], a[href*=/movie/]), a[href*=/tv-show/], a[href*=/movie/]"
+
+    override fun popularAnimeFromElement(element: Element): SAnime = SAnime.create().apply {
+        val link = if (element.tagName().lowercase() == "a") element else element.selectFirst("a[href*=/tv-show/], a[href*=/movie/]")
+            ?: throw Exception("No link")
+        val href = link.attr("href").trim()
+        setUrlWithoutDomain(href)
+
+        val img = element.selectFirst("img")
+        title = img?.attr("alt")?.trim()
+            ?.ifEmpty { link.selectFirst("h2, h3, div.font-bold, .title")?.text()?.trim() }
+            ?: link.text().trim()
+
+        thumbnail_url = img?.attr("data-src")?.ifEmpty { img.attr("src") }
+            ?.ifEmpty { img.attr("data-lazy-src") }
+            ?: ""
+    }
+
+    override fun popularAnimeNextPageSelector(): String? =
+        "nav.pagination a[rel=next], a:contains(Next), nav[role=navigation] a:has(svg:last-child)"
 
     // =============================== Latest ===============================
     override fun latestUpdatesRequest(page: Int): Request =
         GET("$baseUrl/browse?page=$page", headers)
 
-    override fun latestUpdatesParse(response: Response): AnimesPage =
-        parseAnimePage(response)
+    override fun latestUpdatesSelector(): String = popularAnimeSelector()
+
+    override fun latestUpdatesFromElement(element: Element): SAnime = popularAnimeFromElement(element)
+
+    override fun latestUpdatesNextPageSelector(): String? = popularAnimeNextPageSelector()
 
     // =============================== Search ===============================
     override fun searchAnimeRequest(page: Int, query: String, filters: AnimeFilterList): Request {
@@ -104,77 +126,44 @@ class AnimeIndo : AnimeHttpSource() {
         return GET(urlBuilder.build().toString(), headers)
     }
 
-    override fun searchAnimeParse(response: Response): AnimesPage =
-        parseAnimePage(response)
+    override fun searchAnimeSelector(): String = popularAnimeSelector()
 
-    private fun parseAnimePage(response: Response): AnimesPage {
-        val document = response.useAsJsoup()
-        val animeElements = document.select("div.relative.group:has(a[href*=/tv-show/], a[href*=/movie/])")
-            .ifEmpty { document.select("a[href*=/tv-show/], a[href*=/movie/]") }
+    override fun searchAnimeFromElement(element: Element): SAnime = popularAnimeFromElement(element)
 
-        val animeList = animeElements.mapNotNull { element ->
-            runCatching {
-                val link = if (element.tagName().lowercase() == "a") element else element.selectFirst("a[href*=/tv-show/], a[href*=/movie/]")
-                    ?: return@runCatching null
-
-                val href = link.attr("href").trim()
-                if (href.isBlank()) return@runCatching null
-
-                val img = element.selectFirst("img")
-                val titleText = img?.attr("alt")?.trim()
-                    ?.ifEmpty { link.selectFirst("h2, h3, div.font-bold, .title")?.text()?.trim() }
-                    ?: link.text().trim()
-
-                if (titleText.isBlank()) return@runCatching null
-
-                SAnime.create().apply {
-                    setUrlWithoutDomain(href)
-                    title = titleText
-                    thumbnail_url = img?.attr("data-src")?.ifEmpty { img.attr("src") }
-                        ?.ifEmpty { img.attr("data-lazy-src") }
-                        ?: ""
-                }
-            }.getOrNull()
-        }.distinctBy { it.url }
-
-        val hasNextPage = document.selectFirst("nav.pagination a[rel=next], a:contains(Next), nav[role=navigation] a:has(svg:last-child)") != null
-
-        return AnimesPage(animeList, hasNextPage)
-    }
+    override fun searchAnimeNextPageSelector(): String? = popularAnimeNextPageSelector()
 
     // ============================== Filters ===============================
     override fun getFilterList(): AnimeFilterList = AnimeIndoFilters.getFilterList()
 
     // =========================== Anime Details ============================
-    override fun animeDetailsParse(response: Response): SAnime {
-        val document = response.useAsJsoup()
-        return SAnime.create().apply {
-            title = document.selectFirst("h1")?.text()?.trim()
-                ?: document.selectFirst("meta[property=og:title]")?.attr("content")
-                ?: "Anime"
+    override fun animeDetailsParse(document: Document): SAnime = SAnime.create().apply {
+        title = document.selectFirst("h1")?.text()?.trim()
+            ?: document.selectFirst("meta[property=og:title]")?.attr("content")
+            ?: "Anime"
 
-            thumbnail_url = document.selectFirst("picture img, div.thumb img, div.poster img, img.lazyload")
-                ?.let { it.attr("data-src").ifEmpty { it.attr("src") }.ifEmpty { it.attr("data-lazy-src") } }
-                ?: document.selectFirst("meta[property=og:image]")?.attr("content")
+        thumbnail_url = document.selectFirst("picture img, div.thumb img, div.poster img, img.lazyload")
+            ?.let { it.attr("data-src").ifEmpty { it.attr("src") }.ifEmpty { it.attr("data-lazy-src") } }
+            ?: document.selectFirst("meta[property=og:image]")?.attr("content")
 
-            val descElement = document.selectFirst("p.leading-relaxed, div[class*=synopsis], div[class*=description], div.text-gray-300")
-            description = descElement?.text()?.trim()
+        val descElement = document.selectFirst("p.leading-relaxed, div[class*=synopsis], div[class*=description], div.text-gray-300")
+        description = descElement?.text()?.trim()
 
-            genre = document.select("a[href*=/genre/], a[href*=/genres/]").joinToString { it.text().trim() }
+        genre = document.select("a[href*=/genre/], a[href*=/genres/]").joinToString { it.text().trim() }
 
-            val fullText = document.text().lowercase()
-            status = when {
-                "completed" in fullText || "selesai" in fullText -> SAnime.COMPLETED
-                "ongoing" in fullText || "airing" in fullText || "berjalan" in fullText -> SAnime.ONGOING
-                else -> SAnime.UNKNOWN
-            }
+        val fullText = document.text().lowercase()
+        status = when {
+            "completed" in fullText || "selesai" in fullText -> SAnime.COMPLETED
+            "ongoing" in fullText || "airing" in fullText || "berjalan" in fullText -> SAnime.ONGOING
+            else -> SAnime.UNKNOWN
         }
     }
 
     // ============================== Episodes ==============================
+    override fun episodeListSelector(): String = "a[href*=/episode/], a[href*=/watch/]"
+
     override fun episodeListParse(response: Response): List<SEpisode> {
         val document = response.useAsJsoup()
-        val episodeElements = document.select("a[href*=/episode/], a[href*=/watch/]")
+        val episodeElements = document.select(episodeListSelector())
 
         return episodeElements.mapNotNull { element ->
             runCatching {
@@ -204,7 +193,12 @@ class AnimeIndo : AnimeHttpSource() {
         }.distinctBy { it.url }.reversed()
     }
 
+    override fun episodeFromElement(element: Element): SEpisode = throw UnsupportedOperationException()
+
     // ============================ Video Links =============================
+    override fun videoListSelector(): String = throw UnsupportedOperationException()
+    override fun videoFromElement(element: Element): Video = throw UnsupportedOperationException()
+
     private val mp4uploadExtractor by lazy { Mp4uploadExtractor(client) }
     private val gdrivePlayerExtractor by lazy { GdrivePlayerExtractor(client) }
     private val streamTapeExtractor by lazy { StreamTapeExtractor(client) }
@@ -387,9 +381,9 @@ class AnimeIndo : AnimeHttpSource() {
                             append(htmlContent)
                             append("\n")
                             append(scriptData)
-                            if (Unpacker.hasPacked(scriptData)) {
+                            if (JsUnpacker.detect(scriptData)) {
                                 append("\n")
-                                append(runCatching { Unpacker.unpack(scriptData) }.getOrDefault(""))
+                                append(JsUnpacker.unpack(scriptData).joinToString("\n"))
                             }
                         }
 

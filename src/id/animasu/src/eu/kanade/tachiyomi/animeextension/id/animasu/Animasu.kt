@@ -21,7 +21,7 @@ import eu.kanade.tachiyomi.animesource.model.Video
 import eu.kanade.tachiyomi.multisrc.animestream.AnimeStream
 import eu.kanade.tachiyomi.network.GET
 import eu.kanade.tachiyomi.network.awaitSuccess
-import keiyoushi.lib.unpacker.Unpacker
+import keiyoushi.lib.jsunpacker.JsUnpacker
 import keiyoushi.utils.parallelCatchingFlatMapBlocking
 import keiyoushi.utils.tryParse
 import keiyoushi.utils.useAsJsoup
@@ -527,9 +527,9 @@ class Animasu :
                             append(htmlContent)
                             append("\n")
                             append(scriptData)
-                            if (Unpacker.hasPacked(scriptData)) {
+                            if (JsUnpacker.detect(scriptData)) {
                                 append("\n")
-                                append(runCatching { Unpacker.unpack(scriptData) }.getOrDefault(""))
+                                append(JsUnpacker.unpack(scriptData).joinToString("\n"))
                             }
                         }
 
