@@ -7,6 +7,7 @@ import aniyomi.lib.doodextractor.DoodExtractor
 import aniyomi.lib.gdriveplayerextractor.GdrivePlayerExtractor
 import aniyomi.lib.mp4uploadextractor.Mp4uploadExtractor
 import aniyomi.lib.okruextractor.OkruExtractor
+import aniyomi.lib.pixeldrainextractor.PixelDrainExtractor
 import aniyomi.lib.streamtapeextractor.StreamTapeExtractor
 import aniyomi.lib.streamwishextractor.StreamWishExtractor
 import aniyomi.lib.vidhideextractor.VidHideExtractor
@@ -18,12 +19,16 @@ import eu.kanade.tachiyomi.animesource.model.SEpisode
 import eu.kanade.tachiyomi.animesource.model.Video
 import eu.kanade.tachiyomi.multisrc.animestream.AnimeStream
 import eu.kanade.tachiyomi.network.GET
+import eu.kanade.tachiyomi.network.awaitSuccess
+import keiyoushi.utils.parallelCatchingFlatMapBlocking
 import keiyoushi.utils.tryParse
 import keiyoushi.utils.useAsJsoup
+import okhttp3.Headers
 import okhttp3.HttpUrl.Companion.toHttpUrl
 import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
 import okhttp3.Request
 import okhttp3.Response
+import org.json.JSONObject
 import org.jsoup.Jsoup
 import org.jsoup.nodes.Document
 import org.jsoup.nodes.Element
@@ -227,13 +232,52 @@ class Animasu :
     }
 
     // ============================ Video Links =============================
-    override fun videoListSelector() = "select.mirror option[value], select#selectserver option[value], ul.mirror a[data-em], div#pembed iframe, div.player-embed iframe"
+    override fun videoListSelector() = "select.mirror option, select#selectserver option, ul.mirror a[data-em], div#pembed iframe, div.player-embed iframe, iframe#p-iframe"
+
+    override fun videoListParse(response: Response): List<Video> {
+        val document = response.useAsJsoup()
+        val defaultIframe = document.selectFirst("div#pembed iframe, div.player-embed iframe, iframe#p-iframe, .player-embed iframe, iframe[src*=/embed]")
+            ?.let { it.attr("src").ifEmpty { it.attr("data-src") } }
+            ?.trim()
+
+        val items = document.select(videoListSelector())
+
+        val serverList = items.mapNotNull { element ->
+            val name = element.text().trim()
+            val rawData = when (element.tagName().lowercase()) {
+                "option" -> element.attr("value").trim()
+                "a" -> element.attr("data-em").ifEmpty { element.attr("href") }.trim()
+                "iframe" -> element.attr("src").ifEmpty { element.attr("data-src") }.trim()
+                else -> element.attr("href").trim()
+            }
+
+            val url = if (rawData.isBlank() && !defaultIframe.isNullOrBlank()) {
+                extractIframeUrl(defaultIframe)
+            } else if (rawData.isNotBlank()) {
+                extractIframeUrl(rawData)
+            } else {
+                ""
+            }
+
+            if (url.isNotBlank()) {
+                Pair(url, name.ifEmpty { "Default" })
+            } else null
+        }.toMutableList()
+
+        if (serverList.isEmpty() && !defaultIframe.isNullOrBlank()) {
+            serverList.add(Pair(extractIframeUrl(defaultIframe), "Default"))
+        }
+
+        return serverList.distinctBy { it.first }.parallelCatchingFlatMapBlocking { (url, name) ->
+            getVideoList(url, name)
+        }.distinctBy { it.url }
+    }
 
     override suspend fun getHosterUrl(element: Element): String {
         val rawData = when (element.tagName().lowercase()) {
             "option" -> element.attr("value").trim()
             "a" -> element.attr("data-em").trim()
-            "iframe" -> element.attr("src").trim()
+            "iframe" -> element.attr("src").ifEmpty { element.attr("data-src") }.trim()
             else -> element.attr("href").trim()
         }
         if (rawData.isBlank()) return ""
@@ -245,7 +289,7 @@ class Animasu :
         if (data.startsWith("//")) return "https:$data"
 
         val decoded = try {
-            String(Base64.decode(data, Base64.DEFAULT))
+            String(Base64.decode(data, Base64.DEFAULT), Charsets.UTF_8).trim()
         } catch (e: Exception) {
             data
         }
@@ -254,7 +298,8 @@ class Animasu :
         if (decoded.startsWith("//")) return "https:$decoded"
 
         val doc = Jsoup.parse(decoded)
-        val src = doc.selectFirst("iframe")?.attr("src")
+        val iframe = doc.selectFirst("iframe")
+        val src = iframe?.attr("src")?.ifEmpty { iframe.attr("data-src") }
             ?: doc.selectFirst("meta[itemprop=embedUrl]")?.attr("content")
             ?: ""
 
@@ -270,56 +315,144 @@ class Animasu :
     private val streamTapeExtractor by lazy { StreamTapeExtractor(client) }
     private val yourUploadExtractor by lazy { YourUploadExtractor(client) }
     private val okruExtractor by lazy { OkruExtractor(client) }
-    private val streamWishExtractor by lazy { StreamWishExtractor(client, headers) }
-    private val vidHideExtractor by lazy { VidHideExtractor(client, headers) }
     private val bloggerExtractor by lazy { BloggerExtractor(client) }
     private val doodExtractor by lazy { DoodExtractor(client) }
+    private val pixelDrainExtractor by lazy { PixelDrainExtractor() }
 
     override suspend fun getVideoList(url: String, name: String): List<Video> {
         if (url.isBlank()) return emptyList()
         val lowerName = name.lowercase()
         val lowerUrl = url.lowercase()
 
+        // Clean headers specifically for video playback without HTML accept headers and without host-mismatched referers
+        val cleanHeaders = Headers.Builder()
+            .add("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
+            .build()
+
         return runCatching {
             when {
-                "streamtape" in lowerName || "streamtape" in lowerUrl ->
+                // Blogger / Google UserContent streams
+                "blogger" in lowerName || "blogger" in lowerUrl || "bp.blogspot" in lowerUrl || "video.googleusercontent" in lowerUrl -> {
+                    val bloggerHeaders = Headers.Builder()
+                        .add("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
+                        .add("Referer", "https://www.blogger.com/")
+                        .add("Accept", "*/*")
+                        .build()
+                    bloggerExtractor.videosFromUrl(url, bloggerHeaders, name)
+                }
+
+                // Filedon / Uservideo / Userdrive / Samevideo (Inertia R2 apps)
+                "filedon" in lowerUrl || "uservideo" in lowerUrl || "userdrive" in lowerUrl || "samevideo" in lowerUrl || "samehadaku" in lowerUrl -> {
+                    val r2Headers = Headers.Builder()
+                        .add("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
+                        .add("Referer", url)
+                        .add("Accept", "*/*")
+                        .build()
+                    val doc = client.newCall(GET(url, r2Headers)).awaitSuccess().useAsJsoup()
+                    val dataPage = doc.selectFirst("div#app")?.attr("data-page")
+                    if (!dataPage.isNullOrBlank()) {
+                        val json = JSONObject(dataPage)
+                        val props = json.optJSONObject("props")
+                        val videoUrl = props?.optString("url")
+                        if (!videoUrl.isNullOrBlank()) {
+                            listOf(Video(videoUrl, if (name.isNotBlank()) name else "Filedon", videoUrl, r2Headers))
+                        } else emptyList()
+                    } else {
+                        val src = doc.selectFirst("video source, video")?.attr("src")
+                        if (!src.isNullOrBlank()) {
+                            listOf(Video(src, if (name.isNotBlank()) name else "Filedon", src, r2Headers))
+                        } else emptyList()
+                    }
+                }
+
+                // VidHide
+                "vidhide" in lowerName || "vidhide" in lowerUrl || "streamhide" in lowerUrl -> {
+                    VidHideExtractor(client, cleanHeaders).videosFromUrl(url)
+                }
+
+                // StreamWish / FileLions / WishFast / Medixiru / Niramirus
+                "streamwish" in lowerName || "streamwish" in lowerUrl || "filelions" in lowerUrl || "wishembed" in lowerUrl || "wishfast" in lowerUrl || "medixiru" in lowerUrl || "niramirus" in lowerUrl || "strwish" in lowerUrl || "dwish" in lowerUrl -> {
+                    StreamWishExtractor(client, cleanHeaders).videosFromUrl(url)
+                }
+
+                // Mp4Upload
+                "mp4upload" in lowerName || "mp4upload" in lowerUrl -> {
+                    val mp4Headers = Headers.Builder()
+                        .add("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
+                        .add("Referer", "https://www.mp4upload.com/")
+                        .add("Accept", "*/*")
+                        .build()
+                    mp4uploadExtractor.videosFromUrl(url, mp4Headers, suffix = name)
+                }
+
+                // YourUpload
+                "yourupload" in lowerName || "yourupload" in lowerUrl -> {
+                    val youruploadHeaders = Headers.Builder()
+                        .add("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
+                        .add("Referer", "https://www.yourupload.com/")
+                        .add("Accept", "*/*")
+                        .build()
+                    yourUploadExtractor.videoFromUrl(url, youruploadHeaders, name)
+                }
+
+                // StreamTape
+                "streamtape" in lowerName || "streamtape" in lowerUrl || "streamta.pe" in lowerUrl || "tapewith" in lowerUrl || "adblocksurvey" in lowerUrl -> {
                     streamTapeExtractor.videoFromUrl(url)?.let(::listOf).orEmpty()
+                }
 
-                "mp4upload" in lowerName || "mp4upload" in lowerUrl ->
-                    mp4uploadExtractor.videosFromUrl(url, headers)
-
-                "yourupload" in lowerName || "yourupload" in lowerUrl ->
-                    yourUploadExtractor.videoFromUrl(url, headers)
-
-                "ok.ru" in lowerUrl || "okru" in lowerName ->
+                // Ok.ru
+                "ok.ru" in lowerUrl || "okru" in lowerName || "odnoklassniki" in lowerUrl -> {
                     okruExtractor.videosFromUrl(url)
+                }
 
-                "streamwish" in lowerName || "streamwish" in lowerUrl || "filelions" in lowerUrl || "wishembed" in lowerUrl ->
-                    streamWishExtractor.videosFromUrl(url)
+                // Pixeldrain
+                "pixeldrain" in lowerName || "pixeldrain" in lowerUrl -> {
+                    pixelDrainExtractor.videosFromUrl(url, prefix = if (name.isNotBlank()) "$name - " else "")
+                }
 
-                "vidhide" in lowerName || "vidhide" in lowerUrl ->
-                    vidHideExtractor.videosFromUrl(url)
-
-                "blogger" in lowerName || "blogger" in lowerUrl || "bp.blogspot" in lowerUrl ->
-                    bloggerExtractor.videosFromUrl(url, headers, name)
-
-                "dood" in lowerName || "dood" in lowerUrl || "ds2play" in lowerUrl || "doodstream" in lowerUrl ->
+                // DoodStream
+                "dood" in lowerName || "dood" in lowerUrl || "ds2play" in lowerUrl || "doodstream" in lowerUrl -> {
                     doodExtractor.videosFromUrl(url)
+                }
 
+                // Google Drive Player
                 "gdrive" in lowerName || "gdrive" in lowerUrl -> {
                     val gdriveUrl = when {
                         baseUrl in url -> "https:" + (url.toHttpUrlOrNull()?.queryParameter("data") ?: url)
                         else -> url
                     }
-                    gdrivePlayerExtractor.videosFromUrl(gdriveUrl, "Gdrive", headers)
+                    gdrivePlayerExtractor.videosFromUrl(gdriveUrl, "Gdrive", cleanHeaders)
                 }
 
-                url.endsWith(".mp4") || url.endsWith(".m3u8") || url.contains(".mp4?") || url.contains(".m3u8?") ->
-                    listOf(Video(url, name, url, headers))
+                // Direct video link
+                url.endsWith(".mp4") || url.endsWith(".m3u8") || url.contains(".mp4?") || url.contains(".m3u8?") -> {
+                    val streamHeaders = Headers.Builder()
+                        .add("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
+                        .add("Accept", "*/*")
+                        .build()
+                    listOf(Video(url, if (name.isNotBlank()) name else "Direct", url, streamHeaders))
+                }
 
+                // Internal wrapper or generic iframe page
                 else -> {
-                    Log.i("Animasu", "Unrecognized server at getVideoList => Name -> $name || URL => $url")
-                    emptyList()
+                    val reqHeaders = Headers.Builder()
+                        .add("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
+                        .add("Referer", url)
+                        .add("Accept", "*/*")
+                        .build()
+                    val doc = runCatching { client.newCall(GET(url, reqHeaders)).awaitSuccess().useAsJsoup() }.getOrNull()
+                    val subIframe = doc?.selectFirst("iframe")?.attr("src")?.ifEmpty { doc.selectFirst("iframe")?.attr("data-src") }
+                    if (!subIframe.isNullOrBlank() && subIframe != url) {
+                        getVideoList(extractIframeUrl(subIframe), name)
+                    } else {
+                        val videoSrc = doc?.selectFirst("video source, video")?.attr("src")
+                        if (!videoSrc.isNullOrBlank()) {
+                            listOf(Video(videoSrc, if (name.isNotBlank()) name else "Video", videoSrc, reqHeaders))
+                        } else {
+                            Log.i("Animasu", "Unrecognized server at getVideoList => Name -> $name || URL => $url")
+                            emptyList()
+                        }
+                    }
                 }
             }
         }.getOrDefault(emptyList())

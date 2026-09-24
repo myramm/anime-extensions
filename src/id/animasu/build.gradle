@@ -3,7 +3,7 @@ ext {
     extClass = '.Animasu'
     themePkg = 'animestream'
     baseUrl = 'https://animasu.love'
-    overrideVersionCode = 2
+    overrideVersionCode = 3
 }
 
 apply plugin: "kei.plugins.extension.legacy"
@@ -18,4 +18,7 @@ dependencies {
     implementation(project(":lib:vidhideextractor"))
     implementation(project(":lib:bloggerextractor"))
     implementation(project(":lib:doodextractor"))
+    implementation(project(":lib:pixeldrainextractor"))
+    implementation(project(":lib:playlistutils"))
 }
+
