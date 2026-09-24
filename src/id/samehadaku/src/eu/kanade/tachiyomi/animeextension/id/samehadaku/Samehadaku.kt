@@ -174,9 +174,14 @@ class Samehadaku :
         val url = "${parseUrl.protocol}://${parseUrl.host}"
 
         val ajaxVideos = doc.select("#server > ul > li > div, div.server > ul > li > div, .east_player_option")
+            .filterNot {
+                val text = it.text().lowercase()
+                text.contains("mega") || it.attr("style").contains("pointer-events: none")
+            }
             .parallelMapNotNullBlocking {
                 runCatching { getEmbedLinks(url, it) }.getOrNull()
             }
+            .filter { it.second.isNotBlank() }
             .parallelCatchingFlatMapBlocking { server ->
                 getVideosFromEmbed(server.first, server.second)
             }
@@ -187,7 +192,15 @@ class Samehadaku :
             li.select("a[href]").mapNotNull { a ->
                 val server = a.text().trim()
                 val href = a.attr("href").trim()
-                if (href.startsWith("http")) {
+                val lowerHref = href.lowercase()
+                // Skip non-streamable file lockers to keep loading fast and prevent timeouts
+                val isSupportedHost = href.startsWith("http") && (
+                    "filedon" in lowerHref || "pixeldrain" in lowerHref || "vidhide" in lowerHref ||
+                    "streamwish" in lowerHref || "blogger" in lowerHref || "blogspot" in lowerHref ||
+                    "mp4upload" in lowerHref || "yourupload" in lowerHref || "krakenfiles" in lowerHref ||
+                    lowerHref.endsWith(".mp4") || lowerHref.endsWith(".m3u8") || lowerHref.endsWith(".webm")
+                )
+                if (isSupportedHost) {
                     val name = if (server.isNotBlank()) "$server ($quality)" else quality
                     Pair(name, href)
                 } else null
@@ -403,12 +416,7 @@ class Samehadaku :
                     listOf(Video(link, server, headers = streamHeaders))
                 }
 
-                else -> {
-                    val doc = client.newCall(GET(link, videoHeaders)).awaitSuccess().useAsJsoup()
-                    val videoUrl = doc.selectFirst("video source, video")?.attr("src") ?: return emptyList()
-                    val finalUrl = UrlUtils.fixUrl(videoUrl) ?: return emptyList()
-                    listOf(Video(finalUrl, server, headers = videoHeaders))
-                }
+                else -> emptyList()
             }
         }.getOrDefault(emptyList())
     }
