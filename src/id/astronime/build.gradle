@@ -1,7 +1,7 @@
 ext {
     extName = 'Astronime'
     extClass = '.Astronime'
-    extVersionCode = 8
+    extVersionCode = 9
 }
 
 apply plugin: "kei.plugins.extension.legacy"
