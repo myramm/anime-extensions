@@ -65,7 +65,22 @@ class Meownime : ParsedAnimeHttpLegacySource() {
                 } else false
             } else true
 
-            if (isBlocked && request.url.host.contains("meownime", ignoreCase = true)) {
+            val isImage = request.url.encodedPath.let { path ->
+                path.endsWith(".jpg", ignoreCase = true) ||
+                path.endsWith(".jpeg", ignoreCase = true) ||
+                path.endsWith(".png", ignoreCase = true) ||
+                path.endsWith(".webp", ignoreCase = true) ||
+                path.endsWith(".gif", ignoreCase = true)
+            }
+
+            if (isImage && request.url.host.contains("meownime", ignoreCase = true)) {
+                val pathAndQuery = request.url.encodedPath + (request.url.query?.let { "?$it" } ?: "")
+                val cdnUrl = "https://i0.wp.com/meownime.ltd$pathAndQuery"
+                val cdnReq = request.newBuilder().url(cdnUrl).build()
+                return@addInterceptor chain.proceed(cdnReq)
+            }
+
+            if (isBlocked && request.url.host.contains("meownime", ignoreCase = true) && !isImage) {
                 val solverUrls = listOf(
                     "https://s1allsolver.up.railway.app",
                     "https://rbot.duar.eu.cc",
@@ -132,7 +147,7 @@ class Meownime : ParsedAnimeHttpLegacySource() {
 
     // ============================== Popular ===============================
     override fun popularAnimeRequest(page: Int): Request =
-        if (page == 1) GET("$baseUrl/", headers) else GET("$baseUrl/page/$page/", headers)
+        if (page == 1) GET("$baseUrl/status/completed/", headers) else GET("$baseUrl/status/completed/page/$page/", headers)
 
     override fun popularAnimeSelector(): String = "article, div.post, .hentry, div.animpost, div.bsx, div.listupd div.bsx, div.article, .post-item, main article"
 
@@ -157,7 +172,7 @@ class Meownime : ParsedAnimeHttpLegacySource() {
 
     // =============================== Latest ===============================
     override fun latestUpdatesRequest(page: Int): Request =
-        if (page == 1) GET("$baseUrl/", headers) else GET("$baseUrl/page/$page/", headers)
+        if (page == 1) GET("$baseUrl/status/ongoing/", headers) else GET("$baseUrl/status/ongoing/page/$page/", headers)
 
     override fun latestUpdatesSelector(): String = popularAnimeSelector()
 
@@ -165,19 +180,17 @@ class Meownime : ParsedAnimeHttpLegacySource() {
 
     override fun latestUpdatesNextPageSelector(): String? = popularAnimeNextPageSelector()
 
-    override fun latestUpdatesParse(response: Response): AnimesPage {
-        val document = response.useAsJsoup()
-        val anime = document.select(latestUpdatesSelector())
-            .mapNotNull { runCatching { latestUpdatesFromElement(it) }.getOrNull() }
-            .filter { it.title.isNotBlank() && it.url.isNotBlank() }
-            .distinctBy { it.url.trim().removeSuffix("/") }
-        val hasNextPage = latestUpdatesNextPageSelector()?.let { document.selectFirst(it) != null } ?: false
-        return AnimesPage(anime, hasNextPage)
-    }
+    override fun latestUpdatesParse(response: Response): AnimesPage = popularAnimeParse(response)
 
     // =============================== Search ===============================
-    override fun searchAnimeRequest(page: Int, query: String, filters: AnimeFilterList): Request =
-        if (page == 1) GET("$baseUrl/?s=$query", headers) else GET("$baseUrl/page/$page/?s=$query", headers)
+    override fun searchAnimeRequest(page: Int, query: String, filters: AnimeFilterList): Request {
+        return if (query.isNotBlank()) {
+            val q = query.trim()
+            if (page == 1) GET("$baseUrl/?s=$q", headers) else GET("$baseUrl/page/$page/?s=$q", headers)
+        } else {
+            GET(MeownimeFilters.getSearchUrl(baseUrl, page, filters), headers)
+        }
+    }
 
     override fun searchAnimeSelector(): String = popularAnimeSelector()
 
@@ -185,15 +198,9 @@ class Meownime : ParsedAnimeHttpLegacySource() {
 
     override fun searchAnimeNextPageSelector(): String? = popularAnimeNextPageSelector()
 
-    override fun searchAnimeParse(response: Response): AnimesPage {
-        val document = response.useAsJsoup()
-        val anime = document.select(searchAnimeSelector())
-            .mapNotNull { runCatching { searchAnimeFromElement(it) }.getOrNull() }
-            .filter { it.title.isNotBlank() && it.url.isNotBlank() }
-            .distinctBy { it.url.trim().removeSuffix("/") }
-        val hasNextPage = searchAnimeNextPageSelector()?.let { document.selectFirst(it) != null } ?: false
-        return AnimesPage(anime, hasNextPage)
-    }
+    override fun searchAnimeParse(response: Response): AnimesPage = popularAnimeParse(response)
+
+    override fun getFilterList(): AnimeFilterList = MeownimeFilters.FILTER_LIST
 
     // =========================== Anime Details ============================
     override fun animeDetailsParse(document: Document): SAnime = SAnime.create().apply {
@@ -455,9 +462,9 @@ class Meownime : ParsedAnimeHttpLegacySource() {
                 "data-lazy-src",
                 "data-original",
                 "data-cfsrc",
+                "src",
                 "data-srcset",
                 "srcset",
-                "src",
             )
             var found: String? = null
             for (attr in attrList) {
@@ -478,13 +485,22 @@ class Meownime : ParsedAnimeHttpLegacySource() {
 
         if (candidate.isNullOrBlank() || candidate.startsWith("data:image", ignoreCase = true)) return null
 
-        val url = when {
+        var url = when {
             candidate.startsWith("//") -> "https:$candidate"
             candidate.startsWith("/") -> "$baseUrl$candidate"
             else -> candidate
         }
 
-        return url.substringBefore("?resize")
+        if (url.contains("resize=")) {
+            url = url.replace(Regex("""[?&]resize=\d+,\d+"""), "")
+        }
+
+        if (url.contains("meownime.ltd") && !url.contains(".wp.com")) {
+            val path = url.substringAfter("meownime.ltd/")
+            url = "https://i0.wp.com/meownime.ltd/$path"
+        }
+
+        return url
     }
 }
 
