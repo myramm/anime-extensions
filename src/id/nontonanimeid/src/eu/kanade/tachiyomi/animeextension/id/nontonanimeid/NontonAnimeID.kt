@@ -45,12 +45,13 @@ class NontonAnimeID : ParsedAnimeHttpLegacySource() {
     override fun popularAnimeRequest(page: Int): Request =
         if (page == 1) GET("$baseUrl/anime-populer/", headers) else GET("$baseUrl/anime-populer/page/$page/", headers)
 
-    override fun popularAnimeSelector(): String = "article.animpost, div.animpost, div.bsx, article.bsx, .result-item, div.item, div.listupd article, div.listupd div.bsx, div.animeseries, div.animepost, .video-item, .post-item, article"
+    override fun popularAnimeSelector(): String = "div.as-anime-grid a.as-anime-card, a.as-anime-card, article.animeseries, div.as-anime-card, article.animpost, div.animpost, div.bsx, article.bsx, div.listupd article, div.animeseries, div.animepost, .video-item, .post-item, article"
 
     override fun popularAnimeFromElement(element: Element): SAnime = SAnime.create().apply {
-        val link = element.selectFirst("a[href*=/anime/], h2 a, h3 a, a") ?: return@apply
+        val link = if (element.tagName().lowercase() == "a") element else element.selectFirst("a[href*=/anime/], a[href], h2 a, h3 a") ?: return@apply
         setUrlWithoutDomain(link.attr("href"))
-        title = element.selectFirst(".title, h2, h3, .tt, .entry-title, a")?.text()?.trim() ?: link.attr("title").trim()
+        title = element.selectFirst("h3.as-anime-title, .title, h2, h3, .tt, .entry-title, a")?.text()?.trim()
+            ?.ifBlank { link.attr("title").ifBlank { link.attr("alt") } } ?: link.attr("title").trim()
         thumbnail_url = element.getImageUrl()
     }
 
@@ -92,7 +93,7 @@ class NontonAnimeID : ParsedAnimeHttpLegacySource() {
             if (page == 1) GET("$baseUrl/?s=$query", headers) else GET("$baseUrl/page/$page/?s=$query", headers)
         } else {
             val params = NontonAnimeIDFilters.getSearchParameters(filters)
-            if (page == 1) GET("$baseUrl/advanced-search/?$params", headers) else GET("$baseUrl/advanced-search/page/$page/?$params", headers)
+            if (page == 1) GET("$baseUrl/anime/?$params", headers) else GET("$baseUrl/anime/page/$page/?$params", headers)
         }
     }
 
@@ -116,8 +117,8 @@ class NontonAnimeID : ParsedAnimeHttpLegacySource() {
 
     // =========================== Anime Details ============================
     override fun animeDetailsParse(document: Document): SAnime = SAnime.create().apply {
-        title = document.selectFirst("h1.entry-title, .entry-title, h1")?.text()?.trim().orEmpty()
-        thumbnail_url = document.selectFirst("div.thumb img, div.poster img, .entry-content img, .post-thumbnail img, div.limage img, .thumb")?.getImageUrl()
+        title = document.selectFirst("h1.entry-title, .entry-title, h1")?.text()?.replace("Nonton", "", ignoreCase = true)?.replace("Sub Indo", "", ignoreCase = true)?.trim().orEmpty()
+        thumbnail_url = document.selectFirst("div.anime-card__sidebar img, div.anime-card img, article[id^='post-'] img, div.thumb img, div.poster img, .entry-content img, .post-thumbnail img, div.limage img, .thumb")?.getImageUrl()
 
         val statusText = document.selectFirst("div.info-content span:contains(Status), div.spe span:contains(Status), .list-info li:contains(Status)")?.text().orEmpty()
         status = when {

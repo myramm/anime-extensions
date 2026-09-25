@@ -40,12 +40,13 @@ class Alqanime : ParsedAnimeHttpLegacySource() {
     override fun popularAnimeRequest(page: Int): Request =
         if (page == 1) GET("$baseUrl/popular/", headers) else GET("$baseUrl/popular/page/$page/", headers)
 
-    override fun popularAnimeSelector(): String = "div.listupd article.bsx, div.listupd div.bsx, div.listupd article, article.bsx, div.bsx"
+    override fun popularAnimeSelector(): String = "div.listupd div.bsx, div.bsx, article.bsx, div.listupd article"
 
     override fun popularAnimeFromElement(element: Element): SAnime = SAnime.create().apply {
-        val link = element.selectFirst("a") ?: return@apply
+        val link = if (element.tagName().lowercase() == "a") element else element.selectFirst("a[href]") ?: return@apply
         setUrlWithoutDomain(link.attr("href"))
-        title = element.selectFirst(".tt h2, .tt, h2, a")?.text()?.trim() ?: link.attr("title").trim()
+        title = element.selectFirst("div.tt span.ntitle, a[title], img[alt], .tt h2, .tt, h2, a")?.text()?.trim()
+            ?.ifBlank { link.attr("title") } ?: link.attr("title").trim()
         thumbnail_url = element.getImageUrl()
     }
 
@@ -117,8 +118,8 @@ class Alqanime : ParsedAnimeHttpLegacySource() {
 
     // =========================== Anime Details ============================
     override fun animeDetailsParse(document: Document): SAnime = SAnime.create().apply {
-        title = document.selectFirst("h1.entry-title, .entry-title")?.text()?.trim().orEmpty()
-        thumbnail_url = document.selectFirst("div.thumb img, div.bigcontent img, .post-thumbnail img, div.limage img, .thumb")?.getImageUrl()
+        title = document.selectFirst("h1.entry-title, .entry-title, h1")?.text()?.trim().orEmpty()
+        thumbnail_url = document.selectFirst("div.thumb img, div.bigcontent img, .post-thumbnail img, div.limage img, .thumb img, .thumb")?.getImageUrl()
 
         val statusText = document.selectFirst("div.info-content span:contains(Status), div.spe span:contains(Status), .post-content span:contains(Status)")?.text().orEmpty()
         status = when {

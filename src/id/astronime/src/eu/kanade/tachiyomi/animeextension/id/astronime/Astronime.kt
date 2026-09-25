@@ -116,12 +116,13 @@ class Astronime : ParsedAnimeHttpLegacySource() {
     override fun popularAnimeRequest(page: Int): Request =
         if (page == 1) GET("$baseUrl/anime/?order=popular", headers) else GET("$baseUrl/anime/page/$page/?order=popular", headers)
 
-    override fun popularAnimeSelector(): String = "div.listupd article.bsx, div.listupd div.bsx, div.listupd article, article.bsx, div.bsx, div.animpost"
+    override fun popularAnimeSelector(): String = "article.animpost, article.anime, div.animpost, div.animepost, div.listupd article.bsx, div.listupd div.bsx, div.listupd article, article.bsx, div.bsx, article"
 
     override fun popularAnimeFromElement(element: Element): SAnime = SAnime.create().apply {
-        val link = element.selectFirst("a") ?: return@apply
+        val link = if (element.tagName().lowercase() == "a") element else element.selectFirst("a[href*=/anime/], a[href], h2 a, h4 a") ?: return@apply
         setUrlWithoutDomain(link.attr("href"))
-        title = element.selectFirst(".tt h2, .tt, h2, a")?.text()?.trim() ?: link.attr("title").trim()
+        title = element.selectFirst("div.data h2, div.data h4, a[title], a[alt], img[alt], .tt h2, .tt, h2, h3, h4, a")?.text()?.trim()
+            ?.ifBlank { link.attr("title").ifBlank { link.attr("alt") } } ?: link.attr("title").trim()
         thumbnail_url = element.getImageUrl()
     }
 
@@ -187,8 +188,8 @@ class Astronime : ParsedAnimeHttpLegacySource() {
 
     // =========================== Anime Details ============================
     override fun animeDetailsParse(document: Document): SAnime = SAnime.create().apply {
-        title = document.selectFirst("h1.entry-title, .entry-title, h1")?.text()?.trim().orEmpty()
-        thumbnail_url = document.selectFirst("div.thumb img, div.bigcontent img, .post-thumbnail img, div.limage img, .thumb")?.getImageUrl()
+        title = document.selectFirst("h1.entry-title, .entry-title, h1")?.text()?.replace("Trailer", "", ignoreCase = true)?.trim().orEmpty()
+        thumbnail_url = document.selectFirst("div.thumb img, div.bigcontent img, .post-thumbnail img, div.limage img, .thumb img, .thumb")?.getImageUrl()
 
         val statusText = document.selectFirst("div.info-content span:contains(Status), div.spe span:contains(Status)")?.text().orEmpty()
         status = when {
