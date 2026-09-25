@@ -152,14 +152,16 @@ class Astronime : ParsedAnimeHttpLegacySource() {
 
     // ============================== Popular ===============================
     override fun popularAnimeRequest(page: Int): Request =
-        if (page == 1) GET("$baseUrl/anime/?order=popular", headers) else GET("$baseUrl/anime/page/$page/?order=popular", headers)
+        if (page == 1) GET("$baseUrl/daftar-anime/?title=&order=popular&status=&type=", headers)
+        else GET("$baseUrl/daftar-anime/page/$page/?title=&order=popular&status=&type=", headers)
 
-    override fun popularAnimeSelector(): String = "article.animpost, div.listupd article.bsx, div.listupd article, div.bsx, article.anime"
+    override fun popularAnimeSelector(): String =
+        "div.relat article, div.widget_senction article, div.listupd article, article.animpost, article.anime, article.hentry"
 
     override fun popularAnimeFromElement(element: Element): SAnime = SAnime.create().apply {
-        val link = if (element.tagName().lowercase() == "a") element else element.selectFirst("div.animposx a, a[href*='/anime/'], div.thumb a, h2 a, h4 a, a") ?: return@apply
+        val link = if (element.tagName().lowercase() == "a") element else element.selectFirst("div.animposx a, div.thumb a, h2 a, h4 a, a") ?: return@apply
         setUrlWithoutDomain(link.attr("href"))
-        title = element.selectFirst("div.data h2, div.data h4, div.title, .tt h2, .tt, h2, h3, h4")?.text()?.trim()
+        title = element.selectFirst("div.data h2, div.data h4, h2.entry-title, h2, h4, div.title, .tt h2, .tt")?.text()?.trim()
             ?.ifBlank { link.attr("title").ifBlank { link.attr("alt") } } ?: link.attr("title").trim()
         thumbnail_url = element.getImageUrl()
     }
@@ -178,7 +180,8 @@ class Astronime : ParsedAnimeHttpLegacySource() {
 
     // =============================== Latest ===============================
     override fun latestUpdatesRequest(page: Int): Request =
-        if (page == 1) GET("$baseUrl/anime/?order=update", headers) else GET("$baseUrl/anime/page/$page/?order=update", headers)
+        if (page == 1) GET("$baseUrl/terbaru/", headers)
+        else GET("$baseUrl/terbaru/page/$page/", headers)
 
     override fun latestUpdatesSelector(): String = popularAnimeSelector()
 
@@ -186,23 +189,18 @@ class Astronime : ParsedAnimeHttpLegacySource() {
 
     override fun latestUpdatesNextPageSelector(): String? = popularAnimeNextPageSelector()
 
-    override fun latestUpdatesParse(response: Response): AnimesPage {
-        val document = response.useAsJsoup()
-        val anime = document.select(latestUpdatesSelector())
-            .mapNotNull { runCatching { latestUpdatesFromElement(it) }.getOrNull() }
-            .filter { it.title.isNotBlank() && it.url.isNotBlank() }
-            .distinctBy { it.url.trim().removeSuffix("/") }
-        val hasNextPage = latestUpdatesNextPageSelector()?.let { document.selectFirst(it) != null } ?: false
-        return AnimesPage(anime, hasNextPage)
-    }
+    override fun latestUpdatesParse(response: Response): AnimesPage = popularAnimeParse(response)
 
     // =============================== Search ===============================
     override fun searchAnimeRequest(page: Int, query: String, filters: AnimeFilterList): Request {
         return if (query.isNotBlank()) {
-            if (page == 1) GET("$baseUrl/?s=$query", headers) else GET("$baseUrl/page/$page/?s=$query", headers)
+            val q = query.trim()
+            if (page == 1) GET("$baseUrl/daftar-anime/?title=$q&order=&status=&type=", headers)
+            else GET("$baseUrl/daftar-anime/page/$page/?title=$q&order=&status=&type=", headers)
         } else {
             val params = AstronimeFilters.getSearchParameters(filters)
-            if (page == 1) GET("$baseUrl/anime/?$params", headers) else GET("$baseUrl/anime/page/$page/?$params", headers)
+            if (page == 1) GET("$baseUrl/daftar-anime/?$params", headers)
+            else GET("$baseUrl/daftar-anime/page/$page/?$params", headers)
         }
     }
 
@@ -212,15 +210,7 @@ class Astronime : ParsedAnimeHttpLegacySource() {
 
     override fun searchAnimeNextPageSelector(): String? = popularAnimeNextPageSelector()
 
-    override fun searchAnimeParse(response: Response): AnimesPage {
-        val document = response.useAsJsoup()
-        val anime = document.select(searchAnimeSelector())
-            .mapNotNull { runCatching { searchAnimeFromElement(it) }.getOrNull() }
-            .filter { it.title.isNotBlank() && it.url.isNotBlank() }
-            .distinctBy { it.url.trim().removeSuffix("/") }
-        val hasNextPage = searchAnimeNextPageSelector()?.let { document.selectFirst(it) != null } ?: false
-        return AnimesPage(anime, hasNextPage)
-    }
+    override fun searchAnimeParse(response: Response): AnimesPage = popularAnimeParse(response)
 
     override fun getFilterList(): AnimeFilterList = AstronimeFilters.FILTER_LIST
 
@@ -229,22 +219,26 @@ class Astronime : ParsedAnimeHttpLegacySource() {
         title = document.selectFirst("h1.entry-title, .entry-title, h1")?.text()?.replace("Trailer", "", ignoreCase = true)?.trim().orEmpty()
         thumbnail_url = document.selectFirst("div.thumb img, div.bigcontent img, .post-thumbnail img, div.limage img, .thumb img, .thumb")?.getImageUrl()
 
-        val statusText = document.selectFirst("div.info-content span:contains(Status), div.spe span:contains(Status)")?.text().orEmpty()
+        val allSpans = document.select("div.info-content span, div.spe span").map { it.text().trim() }
+        val fullText = document.select("div.info-content, div.spe").text()
+
         status = when {
-            statusText.contains("Completed", ignoreCase = true) -> SAnime.COMPLETED
-            statusText.contains("Ongoing", ignoreCase = true) -> SAnime.ONGOING
+            fullText.contains("Completed", ignoreCase = true) || fullText.contains("Finished Airing", ignoreCase = true) -> SAnime.COMPLETED
+            fullText.contains("Ongoing", ignoreCase = true) || fullText.contains("Currently Airing", ignoreCase = true) -> SAnime.ONGOING
             else -> SAnime.UNKNOWN
         }
 
-        val studio = document.selectFirst("div.info-content span:contains(Studio), div.spe span:contains(Studio)")?.text()?.substringAfter(":")?.trim().orEmpty()
+        val studio = allSpans.firstOrNull { it.startsWith("Studio", ignoreCase = true) }
+            ?.substringAfter(":")?.substringAfter("Studio")?.trim()
+            ?: document.selectFirst("div.info-content span:contains(Studio) a, div.spe span:contains(Studio) a")?.text()?.trim().orEmpty()
         author = studio
 
         genre = document.select("div.genxed a, .genre-info a, .genres a").eachText().joinToString()
 
         val synopsis = document.selectFirst("div.entry-content[itemprop='description'], div.entry-content, div.desc")?.text()?.trim().orEmpty()
-        val type = document.selectFirst("div.info-content span:contains(Tipe), div.spe span:contains(Tipe)")?.text()?.substringAfter(":")?.trim().orEmpty()
-        val totalEp = document.selectFirst("div.info-content span:contains(Episode), div.spe span:contains(Episode)")?.text()?.substringAfter(":")?.trim().orEmpty()
-        val duration = document.selectFirst("div.info-content span:contains(Durasi), div.spe span:contains(Durasi)")?.text()?.substringAfter(":")?.trim().orEmpty()
+        val type = allSpans.firstOrNull { it.startsWith("Tipe", ignoreCase = true) || it.startsWith("Type", ignoreCase = true) }?.substringAfter(":")?.trim().orEmpty()
+        val totalEp = allSpans.firstOrNull { it.startsWith("Total Episode", ignoreCase = true) || it.startsWith("Episode", ignoreCase = true) }?.substringAfter(":")?.trim().orEmpty()
+        val duration = allSpans.firstOrNull { it.startsWith("Durasi", ignoreCase = true) || it.startsWith("Duration", ignoreCase = true) }?.substringAfter(":")?.trim().orEmpty()
 
         description = buildString {
             if (synopsis.isNotBlank()) append("$synopsis\n\n")
@@ -258,28 +252,33 @@ class Astronime : ParsedAnimeHttpLegacySource() {
     }
 
     // ============================== Episodes ==============================
-    override fun episodeListSelector(): String = "div.eplister ul li, ul.clstyle li, div.episodelist ul li"
+    override fun episodeListSelector(): String =
+        "div.lstepsiode ul li, div.listeps ul li, div.episodelist ul li, ul.scrolling li, div.eplister ul li"
 
-    private val episodePattern = Regex("""(?i)(?:Episode|Ep|Eps)\s*(\d+(?:\.\d+)?)""")
-    private val dateFormatter = SimpleDateFormat("MMMM d, yyyy", Locale("id", "ID"))
+    private val episodePattern = Regex("""(?i)(?:Episode|Ep|Eps|OVA)\s*(\d+(?:\.\d+)?)""")
+    private val dateFormatter = SimpleDateFormat("dd/MM/yyyy", Locale("id", "ID"))
     private val dateFormatterEn = SimpleDateFormat("MMMM d, yyyy", Locale.ENGLISH)
+    private val dateFormatterEnAlt = SimpleDateFormat("MMM d, yyyy", Locale.ENGLISH)
 
     override fun episodeFromElement(element: Element): SEpisode = SEpisode.create().apply {
-        val link = element.selectFirst("a") ?: throw Exception("Missing episode link")
+        val link = element.selectFirst("span.lchx a, div.playinfo a, div.epsleft a, a[href*='-episode-'], a[href*='/episode/'], a")
+            ?: throw Exception("Missing episode link")
         setUrlWithoutDomain(link.attr("href"))
 
-        val title = element.selectFirst(".epl-title, .title")?.text()?.trim() ?: link.text().trim()
+        val titleEl = element.selectFirst("span.lchx a, div.playinfo h4, div.epsleft a, .lchx, .title")
+        val title = titleEl?.text()?.trim() ?: link.text().trim()
         name = title
 
-        val numText = element.selectFirst(".epl-num, .epnum")?.text()?.trim().orEmpty()
+        val numText = element.selectFirst("span.eps a, span.eps, div.epsright a, div.playinfo span, .epl-num")?.text()?.trim().orEmpty()
         val numMatch = episodePattern.find(title) ?: Regex("""(\d+(?:\.\d+)?)""").find(numText)
         episode_number = numMatch?.groupValues?.getOrNull(1)?.toFloatOrNull()
             ?: numText.toFloatOrNull()
             ?: 1F
 
-        val dateStr = element.selectFirst(".epl-date, .date")?.text()?.trim()
-        date_upload = dateStr?.let {
-            dateFormatter.tryParse(it) ?: dateFormatterEn.tryParse(it)
+        val dateStr = element.selectFirst("span.date, .date, div.playinfo span")?.text()?.trim()
+        val cleanDate = dateStr?.substringAfter("/")?.trim() ?: dateStr?.trim()
+        date_upload = cleanDate?.let {
+            dateFormatter.tryParse(it) ?: dateFormatterEn.tryParse(it) ?: dateFormatterEnAlt.tryParse(it)
         } ?: 0L
     }
 
