@@ -161,9 +161,8 @@ class Astronime : ParsedAnimeHttpLegacySource() {
     override fun popularAnimeFromElement(element: Element): SAnime = SAnime.create().apply {
         val link = if (element.tagName().lowercase() == "a") element else element.selectFirst("div.animposx a, div.thumb a, h2 a, h4 a, a") ?: return@apply
         setUrlWithoutDomain(link.attr("href"))
-        val rawTitle = element.selectFirst("div.data h2, div.data h4, h2.entry-title, h2, h4, div.title, .tt h2, .tt")?.text()?.trim()
+        title = element.selectFirst("div.data h2, div.data h4, h2.entry-title, h2, h4, div.title, .tt h2, .tt")?.text()?.trim()
             ?.ifBlank { link.attr("title").ifBlank { link.attr("alt") } } ?: link.attr("title").trim()
-        title = rawTitle.replace(Regex("""^\s*#?\d+[\.\-\s:]+"""), "").trim().ifBlank { rawTitle }
         thumbnail_url = element.getImageUrl()
     }
 
@@ -174,10 +173,6 @@ class Astronime : ParsedAnimeHttpLegacySource() {
         val anime = document.select(popularAnimeSelector())
             .mapNotNull { runCatching { popularAnimeFromElement(it) }.getOrNull() }
             .filter { it.title.isNotBlank() && it.url.isNotBlank() }
-            .filterNot { item ->
-                val clean = item.title.trim()
-                clean.isNotEmpty() && (clean[0].isDigit() || clean.startsWith("#") || clean.startsWith("."))
-            }
             .distinctBy { it.url.trim().removeSuffix("/") }
         val hasNextPage = popularAnimeNextPageSelector()?.let { document.selectFirst(it) != null } ?: false
         return AnimesPage(anime, hasNextPage)
@@ -194,15 +189,7 @@ class Astronime : ParsedAnimeHttpLegacySource() {
 
     override fun latestUpdatesNextPageSelector(): String? = popularAnimeNextPageSelector()
 
-    override fun latestUpdatesParse(response: Response): AnimesPage {
-        val document = response.useAsJsoup()
-        val anime = document.select(latestUpdatesSelector())
-            .mapNotNull { runCatching { latestUpdatesFromElement(it) }.getOrNull() }
-            .filter { it.title.isNotBlank() && it.url.isNotBlank() }
-            .distinctBy { it.url.trim().removeSuffix("/") }
-        val hasNextPage = latestUpdatesNextPageSelector()?.let { document.selectFirst(it) != null } ?: false
-        return AnimesPage(anime, hasNextPage)
-    }
+    override fun latestUpdatesParse(response: Response): AnimesPage = popularAnimeParse(response)
 
     // =============================== Search ===============================
     override fun searchAnimeRequest(page: Int, query: String, filters: AnimeFilterList): Request {
@@ -223,15 +210,7 @@ class Astronime : ParsedAnimeHttpLegacySource() {
 
     override fun searchAnimeNextPageSelector(): String? = popularAnimeNextPageSelector()
 
-    override fun searchAnimeParse(response: Response): AnimesPage {
-        val document = response.useAsJsoup()
-        val anime = document.select(searchAnimeSelector())
-            .mapNotNull { runCatching { searchAnimeFromElement(it) }.getOrNull() }
-            .filter { it.title.isNotBlank() && it.url.isNotBlank() }
-            .distinctBy { it.url.trim().removeSuffix("/") }
-        val hasNextPage = searchAnimeNextPageSelector()?.let { document.selectFirst(it) != null } ?: false
-        return AnimesPage(anime, hasNextPage)
-    }
+    override fun searchAnimeParse(response: Response): AnimesPage = popularAnimeParse(response)
 
     override fun getFilterList(): AnimeFilterList = AstronimeFilters.FILTER_LIST
 
