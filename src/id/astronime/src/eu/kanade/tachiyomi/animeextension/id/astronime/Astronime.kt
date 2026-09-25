@@ -70,7 +70,22 @@ class Astronime : ParsedAnimeHttpLegacySource() {
                 } else false
             } else true
 
-            if (isBlocked && request.url.host.contains("astronime", ignoreCase = true)) {
+            val isImage = request.url.encodedPath.let { path ->
+                path.endsWith(".jpg", ignoreCase = true) ||
+                path.endsWith(".jpeg", ignoreCase = true) ||
+                path.endsWith(".png", ignoreCase = true) ||
+                path.endsWith(".webp", ignoreCase = true) ||
+                path.endsWith(".gif", ignoreCase = true)
+            }
+
+            if (isImage && request.url.host.contains("astronime", ignoreCase = true)) {
+                val pathAndQuery = request.url.encodedPath + (request.url.query?.let { "?$it" } ?: "")
+                val cdnUrl = "https://i0.wp.com/astronime.id$pathAndQuery"
+                val cdnReq = request.newBuilder().url(cdnUrl).build()
+                return@addInterceptor chain.proceed(cdnReq)
+            }
+
+            if (isBlocked && request.url.host.contains("astronime", ignoreCase = true) && !isImage) {
                 val solverUrls = listOf(
                     "https://s1allsolver.up.railway.app",
                     "https://rbot.duar.eu.cc",
@@ -139,12 +154,12 @@ class Astronime : ParsedAnimeHttpLegacySource() {
     override fun popularAnimeRequest(page: Int): Request =
         if (page == 1) GET("$baseUrl/anime/?order=popular", headers) else GET("$baseUrl/anime/page/$page/?order=popular", headers)
 
-    override fun popularAnimeSelector(): String = "article.animpost, article.anime, div.animpost, div.animepost, div.listupd article.bsx, div.listupd div.bsx, div.listupd article, article.bsx, div.bsx, article"
+    override fun popularAnimeSelector(): String = "article.animpost, div.listupd article.bsx, div.listupd article, div.bsx, article.anime"
 
     override fun popularAnimeFromElement(element: Element): SAnime = SAnime.create().apply {
-        val link = if (element.tagName().lowercase() == "a") element else element.selectFirst("a[href*=/anime/], a[href], h2 a, h4 a") ?: return@apply
+        val link = if (element.tagName().lowercase() == "a") element else element.selectFirst("div.animposx a, a[href*='/anime/'], div.thumb a, h2 a, h4 a, a") ?: return@apply
         setUrlWithoutDomain(link.attr("href"))
-        title = element.selectFirst("div.data h2, div.data h4, a[title], a[alt], img[alt], .tt h2, .tt, h2, h3, h4, a")?.text()?.trim()
+        title = element.selectFirst("div.data h2, div.data h4, div.title, .tt h2, .tt, h2, h3, h4")?.text()?.trim()
             ?.ifBlank { link.attr("title").ifBlank { link.attr("alt") } } ?: link.attr("title").trim()
         thumbnail_url = element.getImageUrl()
     }
@@ -378,16 +393,16 @@ class Astronime : ParsedAnimeHttpLegacySource() {
     }
 
     private fun Element.getImageUrl(): String? {
-        val img = if (tagName().lowercase() == "img") this else selectFirst("img")
+        val img = if (tagName().lowercase() == "img") this else selectFirst("div.content-thumb img, div.thumb img, img")
         val candidate = if (img != null) {
             val attrList = listOf(
                 "data-src",
                 "data-lazy-src",
                 "data-original",
                 "data-cfsrc",
+                "src",
                 "data-srcset",
                 "srcset",
-                "src",
             )
             var found: String? = null
             for (attr in attrList) {
@@ -408,13 +423,22 @@ class Astronime : ParsedAnimeHttpLegacySource() {
 
         if (candidate.isNullOrBlank() || candidate.startsWith("data:image", ignoreCase = true)) return null
 
-        val url = when {
+        var url = when {
             candidate.startsWith("//") -> "https:$candidate"
             candidate.startsWith("/") -> "$baseUrl$candidate"
             else -> candidate
         }
 
-        return url.substringBefore("?resize")
+        if (url.contains("resize=")) {
+            url = url.replace(Regex("""[?&]resize=\d+,\d+"""), "")
+        }
+
+        if (url.contains("astronime.id") && !url.contains(".wp.com")) {
+            val path = url.substringAfter("astronime.id/")
+            url = "https://i0.wp.com/astronime.id/$path"
+        }
+
+        return url
     }
 }
 
