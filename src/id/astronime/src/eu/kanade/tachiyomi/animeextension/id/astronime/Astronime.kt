@@ -71,36 +71,59 @@ class Astronime : ParsedAnimeHttpLegacySource() {
             } else true
 
             if (isBlocked && request.url.host.contains("astronime", ignoreCase = true)) {
-                try {
-                    val payload = JSONObject().apply {
-                        put("url", request.url.toString())
-                        put("mode", "source")
-                    }.toString()
-                    val reqBody = payload.toRequestBody("application/json; charset=utf-8".toMediaTypeOrNull())
-                    val solverReq = Request.Builder()
-                        .url("https://rbot.duar.eu.cc/cf-clearance-scraper")
-                        .post(reqBody)
-                        .header("Content-Type", "application/json")
-                        .build()
+                val solverUrls = listOf(
+                    "https://s1allsolver.up.railway.app",
+                    "https://rbot.duar.eu.cc",
+                )
 
-                    val solverResp = solverClient.newCall(solverReq).execute()
-                    val bodyStr = solverResp.body?.string().orEmpty()
-                    val json = JSONObject(bodyStr)
-                    val htmlSource = json.optString("source")
-                    val resCode = json.optInt("code", 200)
+                for (apiUrl in solverUrls) {
+                    try {
+                        val endpoint = if (apiUrl.contains("railway.app")) {
+                            "$apiUrl/api/source"
+                        } else {
+                            "$apiUrl/cf-clearance-scraper"
+                        }
 
-                    if (htmlSource.isNotBlank() && resCode in 200..299) {
-                        response?.close()
-                        return@addInterceptor Response.Builder()
-                            .request(request)
-                            .protocol(Protocol.HTTP_1_1)
-                            .code(200)
-                            .message("OK (via Cloudflare Solver)")
-                            .headers(response?.headers ?: Headers.Builder().build())
-                            .body(htmlSource.toResponseBody("text/html; charset=UTF-8".toMediaTypeOrNull()))
+                        val payload = if (apiUrl.contains("railway.app")) {
+                            JSONObject().apply {
+                                put("url", request.url.toString())
+                                put("timeout", 45)
+                            }.toString()
+                        } else {
+                            JSONObject().apply {
+                                put("url", request.url.toString())
+                                put("mode", "source")
+                            }.toString()
+                        }
+
+                        val reqBody = payload.toRequestBody("application/json; charset=utf-8".toMediaTypeOrNull())
+                        val solverReq = Request.Builder()
+                            .url(endpoint)
+                            .post(reqBody)
+                            .header("Content-Type", "application/json")
                             .build()
-                    }
-                } catch (_: Exception) {}
+
+                        val solverResp = solverClient.newCall(solverReq).execute()
+                        if (solverResp.isSuccessful) {
+                            val bodyStr = solverResp.body?.string().orEmpty()
+                            val json = JSONObject(bodyStr)
+                            val htmlSource = json.optString("source")
+                            val resCode = json.optInt("code", 200)
+
+                            if (htmlSource.isNotBlank() && resCode in 200..299 && !htmlSource.contains("Attention Required! | Cloudflare")) {
+                                response?.close()
+                                return@addInterceptor Response.Builder()
+                                    .request(request)
+                                    .protocol(Protocol.HTTP_1_1)
+                                    .code(200)
+                                    .message("OK (via Cloudflare Solver)")
+                                    .headers(response?.headers ?: Headers.Builder().build())
+                                    .body(htmlSource.toResponseBody("text/html; charset=UTF-8".toMediaTypeOrNull()))
+                                    .build()
+                            }
+                        }
+                    } catch (_: Exception) {}
+                }
             }
 
             response ?: throw java.io.IOException("Request failed to ${request.url}")
