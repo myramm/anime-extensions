@@ -1,0 +1,262 @@
+[
+  {
+    "name": "Aniyomi: Alqanime",
+    "pkg": "eu.kanade.tachiyomi.animeextension.id.alqanime",
+    "apk": "aniyomi-id-alqanime.apk",
+    "lang": "id",
+    "code": 6,
+    "version": "14.6",
+    "nsfw": 1,
+    "hasReadme": 0,
+    "hasChangelog": 0,
+    "sources": [
+      {
+        "name": "Alqanime",
+        "lang": "id",
+        "id": "98844994663085091",
+        "baseUrl": "",
+        "versionId": 1
+      }
+    ]
+  },
+  {
+    "name": "Aniyomi: Animasu",
+    "pkg": "eu.kanade.tachiyomi.animeextension.id.animasu",
+    "apk": "aniyomi-id-animasu.apk",
+    "lang": "id",
+    "code": 15,
+    "version": "14.15",
+    "nsfw": 0,
+    "hasReadme": 0,
+    "hasChangelog": 0,
+    "sources": [
+      {
+        "name": "Animasu",
+        "lang": "id",
+        "id": "1119641198846233332",
+        "baseUrl": "",
+        "versionId": 1
+      }
+    ]
+  },
+  {
+    "name": "Aniyomi: Astronime",
+    "pkg": "eu.kanade.tachiyomi.animeextension.id.astronime",
+    "apk": "aniyomi-id-astronime.apk",
+    "lang": "id",
+    "code": 10,
+    "version": "14.10",
+    "nsfw": 0,
+    "hasReadme": 0,
+    "hasChangelog": 0,
+    "sources": [
+      {
+        "name": "Astronime",
+        "lang": "id",
+        "id": "3864813178343282558",
+        "baseUrl": "",
+        "versionId": 1
+      }
+    ]
+  },
+  {
+    "name": "Aniyomi: KaitoAni",
+    "pkg": "eu.kanade.tachiyomi.animeextension.id.kaitoani",
+    "apk": "aniyomi-id-kaitoani.apk",
+    "lang": "id",
+    "code": 4,
+    "version": "14.4",
+    "nsfw": 1,
+    "hasReadme": 0,
+    "hasChangelog": 0,
+    "sources": [
+      {
+        "name": "KaitoAni",
+        "lang": "id",
+        "id": "1349632121137403310",
+        "baseUrl": "",
+        "versionId": 1
+      }
+    ]
+  },
+  {
+    "name": "Aniyomi: Kuramanime",
+    "pkg": "eu.kanade.tachiyomi.animeextension.id.kuramanime",
+    "apk": "aniyomi-id-kuramanime.apk",
+    "lang": "id",
+    "code": 27,
+    "version": "14.27",
+    "nsfw": 0,
+    "hasReadme": 0,
+    "hasChangelog": 0,
+    "sources": [
+      {
+        "name": "Kuramanime",
+        "lang": "id",
+        "id": "4281697987391603356",
+        "baseUrl": "",
+        "versionId": 1
+      }
+    ]
+  },
+  {
+    "name": "Aniyomi: Kuronime",
+    "pkg": "eu.kanade.tachiyomi.animeextension.id.kuronime",
+    "apk": "aniyomi-id-kuronime.apk",
+    "lang": "id",
+    "code": 16,
+    "version": "14.16",
+    "nsfw": 0,
+    "hasReadme": 0,
+    "hasChangelog": 0,
+    "sources": [
+      {
+        "name": "Kuronime",
+        "lang": "id",
+        "id": "8223285454973180610",
+        "baseUrl": "",
+        "versionId": 1
+      }
+    ]
+  },
+  {
+    "name": "Aniyomi: Meownime",
+    "pkg": "eu.kanade.tachiyomi.animeextension.id.meownime",
+    "apk": "aniyomi-id-meownime.apk",
+    "lang": "id",
+    "code": 7,
+    "version": "14.7",
+    "nsfw": 0,
+    "hasReadme": 0,
+    "hasChangelog": 0,
+    "sources": [
+      {
+        "name": "Meownime",
+        "lang": "id",
+        "id": "3829795736553516531",
+        "baseUrl": "",
+        "versionId": 1
+      }
+    ]
+  },
+  {
+    "name": "Aniyomi: MiniOppai",
+    "pkg": "eu.kanade.tachiyomi.animeextension.id.minioppai",
+    "apk": "aniyomi-id-minioppai.apk",
+    "lang": "id",
+    "code": 22,
+    "version": "14.22",
+    "nsfw": 1,
+    "hasReadme": 0,
+    "hasChangelog": 0,
+    "sources": [
+      {
+        "name": "MiniOppai",
+        "lang": "id",
+        "id": "7717852826437616873",
+        "baseUrl": "",
+        "versionId": 1
+      }
+    ]
+  },
+  {
+    "name": "Aniyomi: NimeGami",
+    "pkg": "eu.kanade.tachiyomi.animeextension.id.nimegami",
+    "apk": "aniyomi-id-nimegami.apk",
+    "lang": "id",
+    "code": 8,
+    "version": "14.8",
+    "nsfw": 0,
+    "hasReadme": 0,
+    "hasChangelog": 0,
+    "sources": [
+      {
+        "name": "NimeGami",
+        "lang": "id",
+        "id": "4640913440565750403",
+        "baseUrl": "",
+        "versionId": 1
+      }
+    ]
+  },
+  {
+    "name": "Aniyomi: NontonAnimeID",
+    "pkg": "eu.kanade.tachiyomi.animeextension.id.nontonanimeid",
+    "apk": "aniyomi-id-nontonanimeid.apk",
+    "lang": "id",
+    "code": 5,
+    "version": "14.5",
+    "nsfw": 0,
+    "hasReadme": 0,
+    "hasChangelog": 0,
+    "sources": [
+      {
+        "name": "NontonAnimeID",
+        "lang": "id",
+        "id": "4707991510554100514",
+        "baseUrl": "",
+        "versionId": 1
+      }
+    ]
+  },
+  {
+    "name": "Aniyomi: NontonHentai",
+    "pkg": "eu.kanade.tachiyomi.animeextension.id.nontonhentai",
+    "apk": "aniyomi-id-nontonhentai.apk",
+    "lang": "id",
+    "code": 6,
+    "version": "14.6",
+    "nsfw": 1,
+    "hasReadme": 0,
+    "hasChangelog": 0,
+    "sources": [
+      {
+        "name": "NontonHentai",
+        "lang": "id",
+        "id": "9017744376692175063",
+        "baseUrl": "",
+        "versionId": 1
+      }
+    ]
+  },
+  {
+    "name": "Aniyomi: OtakuDesu",
+    "pkg": "eu.kanade.tachiyomi.animeextension.id.otakudesu",
+    "apk": "aniyomi-id-otakudesu.apk",
+    "lang": "id",
+    "code": 52,
+    "version": "14.52",
+    "nsfw": 0,
+    "hasReadme": 0,
+    "hasChangelog": 0,
+    "sources": [
+      {
+        "name": "OtakuDesu",
+        "lang": "id",
+        "id": "1851486258463622286",
+        "baseUrl": "",
+        "versionId": 1
+      }
+    ]
+  },
+  {
+    "name": "Aniyomi: Samehadaku",
+    "pkg": "eu.kanade.tachiyomi.animeextension.id.samehadaku",
+    "apk": "aniyomi-id-samehadaku.apk",
+    "lang": "id",
+    "code": 14,
+    "version": "14.14",
+    "nsfw": 0,
+    "hasReadme": 0,
+    "hasChangelog": 0,
+    "sources": [
+      {
+        "name": "Samehadaku",
+        "lang": "id",
+        "id": "981163472805202572",
+        "baseUrl": "",
+        "versionId": 1
+      }
+    ]
+  }
+]
